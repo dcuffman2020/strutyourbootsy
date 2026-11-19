@@ -21,7 +21,8 @@ function R.Build(previous)
     local full=name.."-"..((realm and realm~="") and realm or GetRealmName())
     local prior=previous and previous[guid]
     roster[guid]={name=full,leader=UnitIsGroupLeader(unit) and true or false,
-      addon=prior and prior.addon==true or false}
+      addon=prior and prior.addon==true or false,
+      online=UnitIsConnected(unit) and true or false}
     byName[canonical(full)]=guid
     -- Some game events omit a same-realm suffix. Only resolve such names
     -- when unambiguous; ambiguous short names are deliberately rejected.
