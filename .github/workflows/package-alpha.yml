@@ -1,4 +1,4 @@
-name: Build Discord alpha tester ZIP
+name: Build alpha tester ZIP
 
 on:
   push:
@@ -51,10 +51,10 @@ jobs:
           print(f"SHA256={digest}")
           pathlib.Path("PACKAGE_SHA256.txt").write_text(f"{digest}  {zip_name}\n")
           PY
-      - name: Upload test package (extract inner ZIP and share via Discord)
+      - name: Upload alpha test package
         uses: actions/upload-artifact@v4
         with:
-          name: StrutYourBootsy-DEV02-Discord-Tester
+          name: StrutYourBootsy-DEV02-Tester
           path: |
             StrutYourBootsy-DEV02-TESTER-*.zip
             PACKAGE_SHA256.txt
