@@ -23,3 +23,20 @@ Status: **partial implementation**. The pure Lua authority gate is implemented a
 
 ## UX independence
 This module has no Figma dependency. UI will subscribe to validated state events after the protocol and product interaction contract are reconciled.
+
+## Registration prototype implemented (not yet verified in game)
+- Raid leader: `/syb host 1` through `/syb host 5` to announce a registration session.
+- Other addon-equipped raid members: `/syb join contestant` or `/syb join spectator`.
+- Leader applies REGISTER only after roster-GUID validation; peer role comes from a constrained protocol field.
+- Leader sends REG_ACK; receiving peers accept it only from the roster-verified leader.
+- `/syb status` reports registration counts and start eligibility **without starting a contest**.
+- Repeated registration requests with a higher sequence and unchanged role re-send acknowledgment.
+- `/syb refresh` re-announces the session for late joiners.
+- A leader change blocks authoritative registration and start eligibility.
+
+## Known limitations before alpha acceptance
+- No timed heartbeat, periodic retries, reliable snapshot/sync, or persisted recovery; a missed announcement or ACK requires manual retry.
+- Live client roster synchronization and communication remain untested.
+- Peer ACKs are not yet a complete replay-protected replicated state log.
+- START, BALLOT, all runtime stages, and voting are deliberately disabled.
+- Registration counts may change as addon discovery resolves; the minimum-five and pending-users gates must be retested live.
