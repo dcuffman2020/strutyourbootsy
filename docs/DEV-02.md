@@ -52,3 +52,16 @@ This module has no Figma dependency. UI will subscribe to validated state events
 
 ### Still outstanding
 This is **not full state recovery**. There is no persistent authoritative snapshot, receipt-verified replicated state log, automatic post-reload restoration, or designated-client takeover. Registration must not be treated as production-ready without a real multi-client test. Periodic retries and WoW message enqueue results do not guarantee delivery.
+
+## Snapshot consistency design increment
+- `Snapshot.lua` projects a copy of the administrator's **registration-only** state. The projection includes session ID, admin GUID, version, round count, phase, and sorted GUID/role pairs. It deliberately excludes individual ballots, scores, and mutable references to the authoritative contest engine.
+- Replica acceptance requires the *adapter* to verify sender GUID against the current raid leader. The pure-Lua module rejects stale versions, nonconsecutive updates, unauthorized sources, and equal-version content conflicts.
+- Version conflicts fail closed; a resync/recovery workflow must resolve them explicitly.
+- `tests/snapshot_spec.lua` covers unauthorized senders, stale/gap behavior, conflicting replicas and deep-copy isolation.
+- The module is loaded but **is not connected to addon messages**. No claim of synchronized or recovered multiplayer state is made at this point.
+
+### Transport and recovery still required
+Implement chunked bounded serialization; receipt validation and acknowledgments; snapshot request/retry; snapshot expiry and authoritative replacement rules; designated recovery holders; persist/restore after `/reload`; confidential vote data separation; and live multi-client acceptance. The current 180-character payload field cannot carry a full raid snapshot directly.
+
+### Validation limitation
+The GitHub branch was inspected through the connected GitHub service. The execution container has a LuaTeX interpreter but cannot resolve GitHub's hostname; consequently the branch could not be cloned for a complete executable test run. All snapshot tests remain authored but unverified.
