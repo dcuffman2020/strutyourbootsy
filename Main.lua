@@ -1,6 +1,8 @@
 local _,ns=...
 local Core,Network,Session=assert(ns.Core),assert(ns.Network),assert(ns.Session)
+local Sync=assert(ns.Sync)
 local host,peer,localState
+local hostSync,peerSync
 local function say(s) DEFAULT_CHAT_FRAME:AddMessage("|cffffd36aStrut Your Bootsy:|r "..s) end
 local function leader(roster)
  for guid,member in pairs(roster) do if member.leader then return guid,member end end
@@ -26,6 +28,7 @@ Network.SetCallback(function(event,guid,msg,roster)
   if guid~=admin or not rounds or rounds%1~=0 or rounds<1 or rounds>5 then return end
   if not peer or peer.id~=msg.session then
    peer=Session.NewPeer(msg.session,guid,rounds)
+   peerSync=Sync.New(GetTime())
    say("Registration opened. /syb join contestant or /syb join spectator")
   end
  elseif msg.kind=="REGISTER" and host and msg.session==host.id then
@@ -37,7 +40,37 @@ Network.SetCallback(function(event,guid,msg,roster)
  elseif msg.kind=="REG_ACK" and peer then
   local ok=Session.ApplyAck(peer,roster,guid,msg)
   if ok and msg.payload:match("^([%w%-]+)%.")==UnitGUID("player") then
+   if peerSync then Sync.Confirmed(peerSync,peer.registrations[UnitGUID("player")]) end
    say("Your registration was confirmed by the raid leader.")
+  end
+ end
+end)
+-- Registered registration messages are retried while awaiting an ACK.
+-- Periodic announcements help late joiners; no contest transitions are enabled.
+C_Timer.NewTicker(2,function()
+ local now=GetTime()
+ local roster=Network.GetRoster()
+ if host and hostSync and not hostSync.ended then
+  local member=roster[host.adminGuid]
+  local active=member and member.leader and member.online~=false
+  local currentLeader=leader(roster)
+  if currentLeader and currentLeader~=host.adminGuid then
+   hostSync.ended=true
+   say("Raid leadership transferred; registration session ended.")
+  else
+   local state=Sync.Tick(hostSync,now,active and true or false)
+   if state=="ended" then say("Administrator unavailable for five minutes; session ended.") end
+   if state=="active" and Sync.ShouldAdvertise(hostSync,now) then
+    local ok=announce()
+    if ok then Sync.Advertised(hostSync,now) end
+   end
+  end
+ end
+ if peer and peerSync and peerSync.pending then
+  local member=roster[peer.adminGuid]
+  if member and member.leader and member.online~=false and Sync.ShouldRetry(peerSync,now) then
+   local ok=Network.Send("REGISTER",peer.id,peerSync.pending.role)
+   if ok then Sync.SentRequest(peerSync,now) end
   end
  end
 end)
@@ -75,6 +108,7 @@ SlashCmdList.STRUTYOURBOOTSY=function(input)
   end
   if host then say("Already hosting. /syb refresh to announce again.");return end
   host=Session.New(tostring(GetServerTime()).."-"..tostring(math.random(100000,999999)),guid,member.name,rounds)
+  hostSync=Sync.New(GetTime())
   local ok,why=announce()
   if not ok then host=nil;say("Announcement failed: "..tostring(why));return end
   say("Registration announced for "..rounds.." rounds.")
@@ -85,7 +119,11 @@ SlashCmdList.STRUTYOURBOOTSY=function(input)
   if mine then say("Already registered as "..mine);return end
   local role=input:match("join%s+(%w+)")
   local ok,why=Network.Send("REGISTER",peer.id,role)
-  if ok then say("Registration requested; awaiting confirmation.")
+  if ok then
+   if not peerSync then peerSync=Sync.New(GetTime()) end
+   Sync.Request(peerSync,role,GetTime())
+   Sync.SentRequest(peerSync,GetTime())
+   say("Registration requested; awaiting confirmation.")
   else say("Request failed: "..tostring(why)) end
  elseif input=="devstart" then
   localState=Core.New(UnitName("player"),1)
