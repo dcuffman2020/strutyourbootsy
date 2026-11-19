@@ -12,4 +12,5 @@ Session.lua
 Sync.lua
 Snapshot.lua
 SnapshotCodec.lua
+SnapshotTransport.lua
 Main.lua
