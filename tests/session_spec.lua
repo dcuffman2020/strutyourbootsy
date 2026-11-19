@@ -17,6 +17,9 @@ for i=1,5 do
  assert(not S.Register(ctx,roster,guid,message))
 end
 assert(S.CanStart(ctx,roster))
+-- Missing ACK may trigger a new request with a higher sequence.
+assert(S.Register(ctx,roster,"player-1",{kind="REGISTER",session="session-54321",seq=2,payload="contestant"}))
+assert(not S.Register(ctx,roster,"player-1",{kind="REGISTER",session="session-54321",seq=3,payload="spectator"}))
 local forged={kind="REGISTER",session="session-54321",seq=2,payload="spectator"}
 assert(not S.Register(ctx,roster,"observer",forged))
 assert(not S.Register(ctx,roster,"admin-guid",forged))
