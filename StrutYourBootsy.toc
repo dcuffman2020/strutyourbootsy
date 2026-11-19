@@ -5,4 +5,7 @@
 ## SavedVariablesPerCharacter: SYBCharacterDB
 Core.lua
 Authority.lua
+Protocol.lua
+Roster.lua
+Network.lua
 Main.lua
