@@ -1,0 +1,33 @@
+name: Lua unit tests
+
+on:
+  push:
+    branches:
+      - feature/dev-02-raid-comms
+  pull_request:
+    paths:
+      - '**/*.lua'
+      - '.github/workflows/lua-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  lua-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lua-version: ['5.1', '5.4']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Lua
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: ${{ matrix.lua-version }}
+      - name: Run standalone Lua specs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test in tests/*_spec.lua; do
+            echo "Running $test"
+            lua "$test"
+          done

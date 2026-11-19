@@ -13,7 +13,7 @@ Status: **Not run** until recorded against an actual current WoW Retail client. 
 
 1. On client A, run `/syb status`, then `/syb devnetstart`. Confirm discovery is only queued, not reported as delivered.
 2. On client B, run `/syb status`. Confirm the detected leader is client A and the session ID/version are shown without ballot data.
-3. Exchange HELLO and one sanctioned role command. Confirm client B remains pending until an authoritative ACK is received, then reports the new confirmed version.
+3. Confirm client B begins without a session, answers the leader HELLO, and learns session ID/version/phase only from the leader's GUID-bound WELCOME. Exchange one sanctioned role command. Confirm client B remains pending until an authoritative ACK is received, then reports the new confirmed version.
 4. Retry the identical command ID and confirm it is not applied twice.
 5. Confirm silence remains unknown and blocks Start after the discovery timeout. Through the live-GUID confirmation seam, confirm a genuinely no-addon member becomes passive and no longer blocks, while a detected addon user awaiting role remains pending and does block it.
 6. Add a raid member after session start and confirm the member is projected as a late-joiner observer.

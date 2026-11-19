@@ -12,8 +12,13 @@ end
 local function playerName()
     local name, realm = UnitFullName("player")
     if not name then return nil end
-    if realm and realm ~= "" then return name .. "-" .. realm:gsub("%s", "") end
-    return name
+    realm = (realm and realm ~= "" and realm) or
+        (GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName and GetRealmName())
+    return Network.NormalizeName(name, realm)
+end
+
+local function localRealm()
+    return (GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName and GetRealmName())
 end
 
 local function raidRoster()
@@ -28,11 +33,19 @@ local function raidRoster()
 end
 
 local function onNetworkEvent(event, data)
-    if event == "authority_changed" then
+    if event == "session_started" then
+        state = Core.New(data.leader, 1)
+    elseif event == "authority_changed" then
         say("Raid leadership changed; the development session was paused and ended.")
     elseif event == "command_rejected" and data.reason then
         say("Network command rejected: " .. data.reason)
     end
+end
+
+local function onNetworkCommand(action, sender, message)
+    if action ~= "ROLE" then return false, "unsupported_command" end
+    if not state then return false, "no_session" end
+    return Core.Register(state, sender, message.role)
 end
 
 local function setupNetwork()
@@ -40,12 +53,13 @@ local function setupNetwork()
     network = Network.New({
         now=GetTime,
         playerName=playerName,
+        localRealm=localRealm,
         getRoster=raidRoster,
         registerPrefix=function(prefix) return C_ChatInfo.RegisterAddonMessagePrefix(prefix) end,
         send=function(prefix, message, channel, target)
             return pcall(C_ChatInfo.SendAddonMessage, prefix, message, channel, target)
         end,
-    }, { onEvent=onNetworkEvent })
+    }, { onEvent=onNetworkEvent, onCommand=onNetworkCommand })
     local ok, reason = network:Register()
     if not ok then say("Raid communications unavailable: " .. reason); return false end
     network:RefreshRoster()

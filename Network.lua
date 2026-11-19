@@ -15,8 +15,19 @@ Network.MAX_RECENT_COMMANDS = 128
 Network.SEND_BURST = 8
 Network.SEND_WINDOW = 5
 
-local knownTypes = { HELLO=true, STATE=true, CMD=true, ACK=true, REJECT=true, PING=true }
+local knownTypes = { HELLO=true, WELCOME=true, STATE=true, CMD=true, ACK=true, REJECT=true, PING=true }
 local adminActions = { START=true, PAUSE=true, RESUME=true, ADVANCE=true, END=true }
+local rejectReasons = {
+    admin_cannot_participate=true, already_registered=true, disconnected=true,
+    duplicate_result=true, identity_mismatch=true, invalid_ack=true,
+    invalid_command_id=true, invalid_player=true, invalid_reject=true,
+    invalid_result_version=true, invalid_role=true, malformed_payload=true,
+    no_session=true, not_authority=true, not_raid_leader=true,
+    sender_not_in_raid=true, stale_version=true,
+    snapshot_mismatch=true, stale_session=true, unsupported_command=true,
+    unknown_command=true, unknown_command_id=true, unauthorized_sender=true,
+    unsupported_client=true, wrong_channel=true, wrong_phase=true,
+}
 local validPhases = { registration=true, preparation=true, runway=true, voting=true,
     round_results=true, final_results=true, paused=true, ended=true }
 
@@ -41,6 +52,11 @@ local function fullName(name, realm)
     if name:find("-", 1, true) then return name end
     if realm and realm ~= "" then return name .. "-" .. realm:gsub("%s", "") end
     return name
+end
+
+
+function Network.NormalizeName(name, realm)
+    return fullName(name, realm)
 end
 
 local function integer(value, minimum)
@@ -88,7 +104,8 @@ function Network.Decode(wire)
 end
 
 local allowedFields = {
-    HELLO={capability=true}, PING={},
+    HELLO={capability=true}, PING={session_id=true, version=true},
+    WELCOME={session_id=true, version=true, phase=true, leader_guid=true},
     STATE={session_id=true, version=true, phase=true},
     CMD={session_id=true, command_id=true, expected_version=true, action=true, role=true},
     ACK={session_id=true, command_id=true, version=true, reason=true},
@@ -103,6 +120,9 @@ local function validateFields(message)
         if type(value) == "string" and #value > 80 then return false, "malformed_payload" end
     end
     if message.type == "HELLO" and message.capability ~= "raid-comms-v1" then return false, "unsupported_client" end
+    if message.type == "PING" and (not message.session_id or not message.version) then return false, "malformed_payload" end
+    if message.type == "WELCOME" and (not message.session_id or not message.version or
+       not message.phase or not message.leader_guid) then return false, "malformed_payload" end
     if message.type == "STATE" and (not message.session_id or not message.version or not message.phase) then return false, "malformed_payload" end
     if message.type == "CMD" and (not message.session_id or not message.command_id or
        not message.expected_version or not message.action) then return false, "malformed_payload" end
@@ -110,6 +130,8 @@ local function validateFields(message)
        (not message.session_id or not message.command_id or not message.version or not message.reason) then
         return false, "malformed_payload"
     end
+    if message.type == "ACK" and message.reason ~= "ok" then return false, "invalid_ack" end
+    if message.type == "REJECT" and not rejectReasons[message.reason] then return false, "invalid_reject" end
     return true
 end
 
@@ -155,7 +177,8 @@ function Network:RefreshRoster()
     local nextRoster, leader = {}, nil
     local rows = self.api.getRoster and self.api.getRoster() or {}
     for _, row in ipairs(rows) do
-        local name = fullName(row.name, row.realm)
+        local localRealm = self.api.localRealm and self.api.localRealm() or nil
+        local name = fullName(row.name, row.realm or localRealm)
         if name and row.guid and row.guid ~= "" then
             local previous = self.roster[name]
             nextRoster[name] = {
@@ -179,6 +202,7 @@ function Network:RefreshRoster()
 end
 
 function Network:BeginDiscovery()
+    if not self.sessionId or self.api.playerName() ~= self.leader then return false, "not_authority" end
     self.discoveryStarted = self:_now()
     for _, member in pairs(self.roster) do
         if member.name ~= self.leader then member.presence = "unknown" end
@@ -294,7 +318,7 @@ function Network:_handleCommand(message, sender)
     if self.recentCommands[replayKey] then
         local prior = self.recentCommands[replayKey]
         self:Send({ type=prior.ok and "ACK" or "REJECT", session_id=self.sessionId,
-            command_id=id, reason=prior.reason or "ok", version=self.version }, "WHISPER", sender)
+            command_id=id, reason=prior.reason or "ok", version=prior.version }, "WHISPER", sender)
         return prior.ok, prior.reason or "duplicate_replayed"
     end
     if message.session_id ~= self.sessionId then return self:_reject(sender, id, "stale_session") end
@@ -316,13 +340,16 @@ function Network:_handleCommand(message, sender)
     local ok, reason = true, nil
     if not self.callbacks.onCommand then return self:_reject(sender, id, "unsupported_command") end
     ok, reason = self.callbacks.onCommand(action, sender, copy(message))
-    if not ok then self:_remember(replayKey, {ok=false, reason=reason or "rejected"}); return self:_reject(sender, id, reason or "rejected") end
+    if not ok then
+        self:_remember(replayKey, {ok=false, reason=reason or "rejected", version=self.version})
+        return self:_reject(sender, id, reason or "rejected")
+    end
     if action == "ROLE" then
         self.roster[sender].role = message.role
         self.roster[sender].presence = "addon_ready"
     end
     self.version = self.version + 1
-    self:_remember(replayKey, {ok=true})
+    self:_remember(replayKey, {ok=true, version=self.version})
     self:Send({ type="ACK", session_id=self.sessionId, command_id=id, reason="ok", version=self.version }, "WHISPER", sender)
     self:_emit("command_acknowledged", { action=action, sender=sender, commandId=id, version=self.version })
     return true
@@ -330,7 +357,8 @@ end
 
 function Network:Receive(prefix, wire, channel, sender)
     if prefix ~= Network.PREFIX then return false, "wrong_prefix" end
-    sender = fullName(sender)
+    if channel ~= "RAID" and channel ~= "WHISPER" then return false, "wrong_channel" end
+    sender = fullName(sender, self.api.localRealm and self.api.localRealm() or nil)
     local member = sender and self.roster[sender]
     if not member then return self:_reject(sender, nil, "sender_not_in_raid") end
     if not member.connected then return self:_reject(sender, nil, "disconnected") end
@@ -338,9 +366,29 @@ function Network:Receive(prefix, wire, channel, sender)
     if not message then return self:_reject(sender, nil, reason) end
     local valid, validationReason = validateFields(message)
     if not valid then return self:_reject(sender, message.command_id, validationReason) end
+    if message.type ~= "HELLO" and channel ~= "WHISPER" then
+        return self:_reject(sender, message.command_id, "wrong_channel")
+    end
     if message.type == "HELLO" then
         member.presence = "addon_pending"
         self:_emit("addon_detected", { name=sender, guid=member.guid })
+        if self.api.playerName() == self.leader and self.sessionId then
+            return self:Send({ type="WELCOME", session_id=self.sessionId, version=self.version,
+                phase=self.phase, leader_guid=self.roster[self.leader].guid }, "WHISPER", sender)
+        elseif sender == self.leader then
+            return self:Send({ type="HELLO", capability="raid-comms-v1" }, "WHISPER", self.leader)
+        end
+        return true
+    elseif message.type == "WELCOME" then
+        if sender ~= self.leader then return self:_reject(sender, nil, "unauthorized_sender") end
+        if member.guid ~= message.leader_guid then return self:_reject(sender, nil, "identity_mismatch") end
+        local version = integer(message.version, 1)
+        if not version or not validPhases[message.phase] then return self:_reject(sender, nil, "malformed_payload") end
+        if self.sessionId and self.sessionId ~= message.session_id then return self:_reject(sender, nil, "stale_session") end
+        if self.sessionId and version < self.version then return self:_reject(sender, nil, "stale_version") end
+        self.sessionId, self.version, self.phase = message.session_id, version, message.phase
+        self.originalLeader = sender
+        self:_emit("session_joined", self:GetProjection())
         return true
     elseif message.type == "CMD" then
         if self.api.playerName() ~= self.leader then return self:_reject(sender, message.command_id, "not_authority") end
@@ -350,9 +398,22 @@ function Network:Receive(prefix, wire, channel, sender)
         local pending = self.pending[message.command_id]
         if not pending then return self:_reject(sender, message.command_id, "unknown_command_id") end
         local version = integer(message.version, 0)
-        if not version or version < self.version then return self:_reject(sender, message.command_id, "stale_version") end
+        local expectedVersion = integer(pending.message.expected_version, 0)
+        if message.type == "ACK" then
+            if message.reason ~= "ok" then return self:_reject(sender, message.command_id, "invalid_ack") end
+            if not version or not expectedVersion or version ~= expectedVersion + 1 then
+                return self:_reject(sender, message.command_id, "invalid_result_version")
+            end
+        elseif message.reason == "ok" then return self:_reject(sender, message.command_id, "invalid_reject") end
+        if message.type == "REJECT" and (not version or not expectedVersion or
+           (message.reason == "snapshot_mismatch" and version <= expectedVersion) or
+           (message.reason ~= "snapshot_mismatch" and version ~= expectedVersion)) then
+            return self:_reject(sender, message.command_id, "invalid_result_version")
+        end
+        if pending.status ~= "pending" then return self:_reject(sender, message.command_id, "duplicate_result") end
         pending.status = message.type == "ACK" and "acknowledged" or "rejected"
-        pending.reason, self.version = message.reason, version
+        pending.reason, pending.serverVersion = message.reason, version
+        if message.type == "ACK" then self.version = version end
         self:_emit("request_result", { commandId=message.command_id, status=pending.status, reason=pending.reason })
         return message.type == "ACK", message.reason
     elseif message.type == "STATE" then
@@ -363,7 +424,10 @@ function Network:Receive(prefix, wire, channel, sender)
         self:_emit("state_confirmed", self:GetProjection())
         return true
     elseif message.type == "PING" then
-        member.presence = "addon_ready"
+        if message.session_id ~= self.sessionId or integer(message.version, 0) ~= self.version then
+            return self:_reject(sender, nil, "snapshot_mismatch")
+        end
+        self:_emit("heartbeat", {name=sender, guid=member.guid})
         return true
     end
     return self:_reject(sender, nil, "unknown_command")

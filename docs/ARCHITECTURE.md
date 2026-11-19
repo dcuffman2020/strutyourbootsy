@@ -30,6 +30,8 @@ Status: **foundation / alpha**, 2026-11-18. This is not a finished multiplayer a
 - Outgoing traffic is capped at eight messages per rolling five-second window per client. Incoming packets are size/schema/field checked before use. The live transport sender is reconciled against the current full-name + GUID roster entry; payload identity claims convey no authority.
 - Calling `C_ChatInfo.SendAddonMessage` only produces `queued`. A client mutation remains `pending` until a validated ACK or newer authoritative STATE arrives. Retries reuse the same command ID, and leaders cache 128 command results for idempotent replay handling.
 - Discovery lasts ten seconds. A HELLO identifies an addon-equipped member as pending until role confirmation. Silence remains unknown and continues to block Start; it is never treated as proof that the addon is absent. A separate higher-level workflow may confirm a passive observer only against the member's current live GUID.
+- The leader begins discovery with HELLO. A participant answers by WHISPER; the leader replies with a GUID-bound WELCOME carrying the current session ID, version and phase. Only that validated WELCOME may bootstrap a fresh participant session.
+- Successful command ACKs must carry `ok` and exactly the request's expected version plus one. Rejections never advance client state, and replayed command results retain their original response version.
 - Leader transfer emits `authority_changed`, pauses, and then ends the session. It never silently transfers the old session's authority.
 - Only sanitized phase/session/version/presence projections are distributed. There is no ballot message type and no voter-to-rating payload route.
 
