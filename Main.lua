@@ -9,6 +9,7 @@ local function leader(roster)
 end
 local function announce()
  if not host then return false,"no_session" end
+ if hostSync and (hostSync.ended or hostSync.suspended) then return false,"session_suspended" end
  if not ns.Authority.IsLeaderStillAuthorized(host.authority,Network.GetRoster()) then return false,"leader_changed" end
  return Network.Send("ANNOUNCE",host.id,tostring(host.rounds))
 end
@@ -31,7 +32,7 @@ Network.SetCallback(function(event,guid,msg,roster)
    peerSync=Sync.New(GetTime())
    say("Registration opened. /syb join contestant or /syb join spectator")
   end
- elseif msg.kind=="REGISTER" and host and msg.session==host.id then
+ elseif msg.kind=="REGISTER" and host and hostSync and not hostSync.suspended and not hostSync.ended and msg.session==host.id then
   local ok=Session.Register(host,roster,guid,msg)
   if not ok then return end
   local delivered,why=Network.Send("REG_ACK",host.id,guid.."."..msg.payload)
@@ -89,6 +90,7 @@ SlashCmdList.STRUTYOURBOOTSY=function(input)
    local registered=0
    for _ in pairs(host.guids) do registered=registered+1 end
    local ok,why=Session.CanStart(host,roster)
+   if hostSync and (hostSync.suspended or hostSync.ended) then ok=false;why=hostSync.ended and "session_ended" or "session_suspended" end
    say("Host: "..registered.." registered; "..Session.Pending(host,roster).." pending addon peers; start eligible "..tostring(ok)..(why and " ("..why..")" or ""))
   elseif peer then say("Peer session "..peer.id.."; registration only.")
   elseif localState then say("Local dev session: "..localState.phase)
@@ -125,10 +127,20 @@ SlashCmdList.STRUTYOURBOOTSY=function(input)
    Sync.SentRequest(peerSync,GetTime())
    say("Registration requested; awaiting confirmation.")
   else say("Request failed: "..tostring(why)) end
+ elseif input=="resume-registration" then
+  if not host or not hostSync then say("You are not hosting a session.");return end
+  if hostSync.ended then say("This session ended and cannot be resumed.");return end
+  if not ns.Authority.IsLeaderStillAuthorized(host.authority,roster) then
+   say("Only the original raid leader may resume.");return
+  end
+  hostSync.suspended=false
+  Sync.LeaderSeen(hostSync,GetTime())
+  say("Registration resumed.")
+  announce()
  elseif input=="devstart" then
   localState=Core.New(UnitName("player"),1)
   say("Local developer-only session created.")
  else
-  say("Commands: /syb host 1..5; /syb join contestant; /syb join spectator; /syb status; /syb peers; /syb refresh; /syb devstart")
+  say("Commands: /syb host 1..5; /syb join contestant; /syb join spectator; /syb status; /syb peers; /syb refresh; /syb resume-registration; /syb devstart")
  end
 end
