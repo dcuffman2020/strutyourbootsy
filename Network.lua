@@ -42,6 +42,7 @@ end
 local frame=CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+frame:RegisterEvent("UNIT_CONNECTION")
 frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:SetScript("OnEvent",function(_,event,...)
  if event=="PLAYER_LOGIN" then
@@ -50,7 +51,7 @@ frame:SetScript("OnEvent",function(_,event,...)
   if not prefixReady then notify("PREFIX_FAILED",result) end
   rebuild()
   sendHello()
- elseif event=="GROUP_ROSTER_UPDATE" then
+ elseif event=="GROUP_ROSTER_UPDATE" or event=="UNIT_CONNECTION" then
   rebuild()
   sendHello()
  elseif event=="CHAT_MSG_ADDON" then
