@@ -8,4 +8,5 @@ Authority.lua
 Protocol.lua
 Roster.lua
 Network.lua
+Session.lua
 Main.lua
