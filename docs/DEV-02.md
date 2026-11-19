@@ -90,3 +90,8 @@ The GitHub branch was inspected through the connected GitHub service. The execut
 4. Add explicit synchronized pause/recovery and safe persistent snapshots for reloads; current peer replication is in-memory only.
 5. Check real WoW addon API return codes, packet size, message throttling and protocol behavior on the current Retail build.
 6. Until those gates pass, no registration or snapshot flow should be considered release-ready; active gameplay phases remain disabled.
+
+## Automated testing baseline (2026-11-18)
+- GitHub Actions workflow `.github/workflows/lua-tests.yml` runs every `tests/*_spec.lua` with Lua 5.1 and 5.4 on pushes to the engineering branch and relevant pull requests.
+- Initial CI run 44436322087: both Lua 5.1 and Lua 5.4 jobs passed.
+- Passing standalone tests does not prove WoW Retail event/API correctness or multiplayer reliability. Live raid acceptance is still outstanding.
