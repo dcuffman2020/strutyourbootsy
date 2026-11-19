@@ -40,3 +40,15 @@ This module has no Figma dependency. UI will subscribe to validated state events
 - Peer ACKs are not yet a complete replay-protected replicated state log.
 - START, BALLOT, all runtime stages, and voting are deliberately disabled.
 - Registration counts may change as addon discovery resolves; the minimum-five and pending-users gates must be retested live.
+
+## Reliability increment (2026-11-18)
+- Registration requests are retried every 8 seconds until the leader's verified ACK is observed. Repeats get fresh sequence numbers and cannot change an accepted role.
+- Administrator reannounces an active registration session every 20 seconds to help late addon clients discover it.
+- Network adapter observes connection-status changes; original administrator disconnect suspends registration immediately.
+- A 300-second administrator absence ends the registration session. Leadership transfer ends the old session immediately.
+- Resuming a suspended session requires the original leader to enter `/syb resume-registration`; ended sessions are not recoverable.
+- `/syb status` refuses to mark a suspended or ended registration eligible.
+- Pure Lua deterministic retry/timeout tests: `tests/sync_spec.lua`.
+
+### Still outstanding
+This is **not full state recovery**. There is no persistent authoritative snapshot, receipt-verified replicated state log, automatic post-reload restoration, or designated-client takeover. Registration must not be treated as production-ready without a real multi-client test. Periodic retries and WoW message enqueue results do not guarantee delivery.
