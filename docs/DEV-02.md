@@ -65,3 +65,11 @@ Implement chunked bounded serialization; receipt validation and acknowledgments;
 
 ### Validation limitation
 The GitHub branch was inspected through the connected GitHub service. The execution container has a LuaTeX interpreter but cannot resolve GitHub's hostname; consequently the branch could not be cloned for a complete executable test run. All snapshot tests remain authored but unverified.
+
+## Bounded snapshot codec (implementation increment)
+- `SnapshotCodec.lua` serializes the registration-only `Snapshot.lua` projection without executable deserialization.
+- Splits data into up to 64 fragments of 120 payload bytes, each inside the existing 180-character protocol payload budget.
+- Out-of-order fragments are assembled only after all pieces arrive. Identical retransmissions are accepted; conflicting duplicates, mixed transfer IDs and checksum mismatches fail closed.
+- Assembly deliberately stays in memory and is not wired to `Network.lua` yet; no live snapshot send, resync, receipt, timeout eviction, or full-session recovery is claimed.
+- The rolling checksum detects accidental corruption but **is not cryptographic authentication**; roster GUID and session authorization must be enforced in the transport adapter, and malicious in-group addon clients remain a threat model.
+- Added `tests/snapshot_codec_spec.lua` for out-of-order, duplicates, corruption, malformed fields and maximum raid registration count. Tests authored but not executed.
