@@ -10,4 +10,5 @@ Roster.lua
 Network.lua
 Session.lua
 Sync.lua
+Snapshot.lua
 Main.lua
