@@ -5,7 +5,7 @@ local P={}
 ns.Protocol=P
 P.PREFIX="StrutYourBootsy"
 P.MAX_BYTES=255
-local kinds={HELLO=true,ANNOUNCE=true,REGISTER=true,REG_ACK=true,BALLOT=true,
+local kinds={HELLO=true,ANNOUNCE=true,REGISTER=true,REG_ACK=true,SNAP_REQ=true,SNAP_PART=true,SNAP_ACK=true,BALLOT=true,
  START=true,BEGIN_RUNWAY=true,BEGIN_VOTING=true,CLOSE_VOTING=true,
  NEXT_ROUND=true,PAUSE=true,RESUME=true,END=true}
 local function safe(s,pattern,min,max)
