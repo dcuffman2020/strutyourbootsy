@@ -1,13 +1,13 @@
--- DEV-02 strict bounded protocol. Discovery uses session "-" only for HELLO.
+-- DEV-02 strict bounded protocol: no executable deserialization.
 local _, ns = ...
-ns = ns or {}
-local P = {}
-ns.Protocol = P
-P.PREFIX = "StrutYourBootsy"
-P.MAX_BYTES = 255
-local kinds = {HELLO=true, ANNOUNCE=true, REGISTER=true, BALLOT=true,
- START=true, BEGIN_RUNWAY=true, BEGIN_VOTING=true, CLOSE_VOTING=true,
- NEXT_ROUND=true, PAUSE=true, RESUME=true, END=true}
+ns=ns or {}
+local P={}
+ns.Protocol=P
+P.PREFIX="StrutYourBootsy"
+P.MAX_BYTES=255
+local kinds={HELLO=true,ANNOUNCE=true,REGISTER=true,REG_ACK=true,BALLOT=true,
+ START=true,BEGIN_RUNWAY=true,BEGIN_VOTING=true,CLOSE_VOTING=true,
+ NEXT_ROUND=true,PAUSE=true,RESUME=true,END=true}
 local function safe(s,pattern,min,max)
  return type(s)=="string" and #s>=min and #s<=max and s:match(pattern)~=nil
 end
@@ -18,7 +18,7 @@ function P.Encode(kind,session,seq,payload)
  payload=payload or ""
  if not safe(payload,"^[%w%._%-]*$",0,180) then return nil,"invalid_payload" end
  local wire=table.concat({"SYB1",kind,session,tostring(seq),payload},"|")
- if #wire> P.MAX_BYTES then return nil,"message_too_long" end
+ if #wire>P.MAX_BYTES then return nil,"message_too_long" end
  return wire
 end
 function P.Decode(wire)
@@ -26,10 +26,10 @@ function P.Decode(wire)
  local kind,session,seq,payload=wire:match("^SYB1|([^|]+)|([^|]+)|([^|]+)|([^|]*)$")
  if not kind then return nil,"invalid_wire" end
  if not seq:match("^[1-9]%d*$") or #seq>10 then return nil,"invalid_sequence" end
- local sequence=tonumber(seq)
- local normalized,reason=P.Encode(kind,session,sequence,payload)
+ local number=tonumber(seq)
+ local normalized,reason=P.Encode(kind,session,number,payload)
  if not normalized then return nil,reason end
  if normalized~=wire then return nil,"noncanonical_wire" end
- return {kind=kind,session=session,seq=sequence,payload=payload}
+ return {kind=kind,session=session,seq=number,payload=payload}
 end
 return P
