@@ -73,3 +73,20 @@ The GitHub branch was inspected through the connected GitHub service. The execut
 - Assembly deliberately stays in memory and is not wired to `Network.lua` yet; no live snapshot send, resync, receipt, timeout eviction, or full-session recovery is claimed.
 - The rolling checksum detects accidental corruption but **is not cryptographic authentication**; roster GUID and session authorization must be enforced in the transport adapter, and malicious in-group addon clients remain a threat model.
 - Added `tests/snapshot_codec_spec.lua` for out-of-order, duplicates, corruption, malformed fields and maximum raid registration count. Tests authored but not executed.
+
+## Network snapshot integration increment
+- `SnapshotTransport.lua` connects the registration projection and fragment codec through `Main.lua` using the existing verified raid message adapter.
+- New `SNAP_REQ`, `SNAP_PART`, and `SNAP_ACK` messages allow participants to request state, receive bounded fragments, and acknowledge a completed version.
+- Administrator broadcasts snapshot fragments at a controlled cadence while registration remains active; a successful registration updates the queued snapshot.
+- Incoming fragments must come from the currently verified raid leader matching the expected session's admin GUID. Invalid fragments, version gaps, and conflicts do not silently replace trusted state. Version gaps trigger a fresh replica request.
+- Participants request current state periodically; the leader records received version ACKs for diagnostics, not delivery guarantees.
+- New `tests/snapshot_transport_spec.lua` covers receiving, source rejection, ACK version and resync reset.
+- No individual ballots or voting state are serialized or transmitted.
+
+### Remaining reliability gates
+1. Execute **all** Lua specs and fix actual failures.
+2. Test interleaved/new snapshot transfers, packet loss, duplicate fragments, peers joining late, and reconnects with real WoW clients.
+3. Add per-recipient transfer IDs, receipt-based delivery tracking, controlled retry/backoff, and bounded resource/timeout policies for partial assemblies.
+4. Add explicit synchronized pause/recovery and safe persistent snapshots for reloads; current peer replication is in-memory only.
+5. Check real WoW addon API return codes, packet size, message throttling and protocol behavior on the current Retail build.
+6. Until those gates pass, no registration or snapshot flow should be considered release-ready; active gameplay phases remain disabled.
