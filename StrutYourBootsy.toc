@@ -11,4 +11,5 @@ Network.lua
 Session.lua
 Sync.lua
 Snapshot.lua
+SnapshotCodec.lua
 Main.lua
