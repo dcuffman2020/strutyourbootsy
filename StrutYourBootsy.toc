@@ -4,4 +4,13 @@
 ## Version: 0.1.0-alpha
 ## SavedVariablesPerCharacter: SYBCharacterDB
 Core.lua
+Authority.lua
+Protocol.lua
+Roster.lua
+Network.lua
+Session.lua
+Sync.lua
+Snapshot.lua
+SnapshotCodec.lua
+SnapshotTransport.lua
 Main.lua
