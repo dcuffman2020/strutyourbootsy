@@ -9,4 +9,5 @@ Protocol.lua
 Roster.lua
 Network.lua
 Session.lua
+Sync.lua
 Main.lua
