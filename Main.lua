@@ -1,8 +1,10 @@
 local _,ns=...
 local Core,Network,Session=assert(ns.Core),assert(ns.Network),assert(ns.Session)
 local Sync=assert(ns.Sync)
+local Transport=assert(ns.SnapshotTransport)
 local host,peer,localState
 local hostSync,peerSync
+local snapshotPeer,outbound,lastFragmentAt,acknowledged = nil,nil,-999,{}
 local function say(s) DEFAULT_CHAT_FRAME:AddMessage("|cffffd36aStrut Your Bootsy:|r "..s) end
 local function leader(roster)
  for guid,member in pairs(roster) do if member.leader then return guid,member end end
@@ -30,6 +32,7 @@ Network.SetCallback(function(event,guid,msg,roster)
   if not peer or peer.id~=msg.session then
    peer=Session.NewPeer(msg.session,guid,rounds)
    peerSync=Sync.New(GetTime())
+   snapshotPeer=Transport.NewPeer(msg.session,guid)
    say("Registration opened. /syb join contestant or /syb join spectator")
   end
  elseif msg.kind=="REGISTER" and host and hostSync and not hostSync.suspended and not hostSync.ended and msg.session==host.id then
@@ -38,12 +41,44 @@ Network.SetCallback(function(event,guid,msg,roster)
   local delivered,why=Network.Send("REG_ACK",host.id,guid.."."..msg.payload)
   if not delivered then say("Registration saved; ACK not queued: "..tostring(why)) end
   say(roster[guid].name.." registered as "..msg.payload)
+  outbound=Transport.Build(host)
+ elseif msg.kind=="SNAP_REQ" and host and hostSync and not hostSync.suspended and not hostSync.ended
+  and msg.session==host.id and msg.payload=="sync" and roster[guid] and roster[guid].addon then
+  outbound=Transport.Build(host)
+ elseif msg.kind=="SNAP_PART" and peer and snapshotPeer and msg.session==peer.id then
+  local leaderGuid=leader(roster)
+  local ok,reason=Transport.Receive(snapshotPeer,guid,leaderGuid==guid,msg,GetTime())
+  if ok and reason=="completed" then
+   Network.Send("SNAP_ACK",peer.id,tostring(snapshotPeer.ackVersion))
+  elseif not ok and reason=="version_gap" then
+   Transport.ResetForResync(snapshotPeer)
+   snapshotPeer.lastRequestAt=nil
+  end
+ elseif msg.kind=="SNAP_ACK" and host and msg.session==host.id and roster[guid] and roster[guid].addon then
+  local version=tonumber(msg.payload)
+  if version and version%1==0 and version>=1 and version<=host.state.version then
+   acknowledged[guid]=version
+  end
  elseif msg.kind=="REG_ACK" and peer then
   local ok=Session.ApplyAck(peer,roster,guid,msg)
   if ok and msg.payload:match("^([%w%-]+)%.")==UnitGUID("player") then
    if peerSync then Sync.Confirmed(peerSync,peer.registrations[UnitGUID("player")]) end
    say("Your registration was confirmed by the raid leader.")
   end
+ end
+end)
+-- Send one bounded snapshot frame at a time. WoW delivery is not guaranteed.
+C_Timer.NewTicker(0.5,function()
+ if not outbound or not host or not hostSync or hostSync.ended or hostSync.suspended then return end
+ if GetTime()-lastFragmentAt<0.5 then return end
+ local part=Transport.Next(outbound)
+ if not part then outbound=nil;return end
+ local ok=Network.Send("SNAP_PART",host.id,part)
+ if ok then
+  Transport.Advance(outbound)
+  lastFragmentAt=GetTime()
+ else
+  lastFragmentAt=GetTime()
  end
 end)
 -- Registered registration messages are retried while awaiting an ACK.
@@ -65,6 +100,13 @@ C_Timer.NewTicker(2,function()
     local ok=announce()
     if ok then Sync.Advertised(hostSync,now) end
    end
+  end
+ end
+ if peer and snapshotPeer and not snapshotPeer.replica.conflicted then
+  local member=roster[peer.adminGuid]
+  if member and member.leader and member.online~=false and Transport.ShouldRequest(snapshotPeer,now) then
+   local ok=Network.Send("SNAP_REQ",peer.id,"sync")
+   if ok then Transport.Requested(snapshotPeer,now) end
   end
  end
  if peer and peerSync and peerSync.pending then
@@ -92,7 +134,7 @@ SlashCmdList.STRUTYOURBOOTSY=function(input)
    local ok,why=Session.CanStart(host,roster)
    if hostSync and (hostSync.suspended or hostSync.ended) then ok=false;why=hostSync.ended and "session_ended" or "session_suspended" end
    say("Host: "..registered.." registered; "..Session.Pending(host,roster).." pending addon peers; start eligible "..tostring(ok)..(why and " ("..why..")" or ""))
-  elseif peer then say("Peer session "..peer.id.."; registration only.")
+  elseif peer then say("Peer session "..peer.id.."; replicated version "..(snapshotPeer and snapshotPeer.replica.version or 0).."; registration only.")
   elseif localState then say("Local dev session: "..localState.phase)
   else say("No active session.") end
  elseif input=="peers" then
