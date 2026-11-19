@@ -69,6 +69,11 @@ frame:SetScript("OnEvent",function(_,event,...)
    if isNew then sendHello() end
    return
   end
+  -- A valid leader announcement also proves that the roster-verified
+  -- leader has our addon; its HELLO may have been delayed by throttling.
+  if message.kind=="ANNOUNCE" and roster[guid].leader then
+   roster[guid].addon=true
+  end
   if not roster[guid].addon then return end
   notify("SESSION_MESSAGE",guid,message,roster)
  end
