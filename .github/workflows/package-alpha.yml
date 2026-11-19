@@ -1,0 +1,62 @@
+name: Build Discord alpha tester ZIP
+
+on:
+  push:
+    branches:
+      - feature/dev-02-raid-comms
+    paths:
+      - 'Core.lua'
+      - 'Network.lua'
+      - 'Main.lua'
+      - 'StrutYourBootsy.toc'
+      - 'docs/ALPHA_TESTER_GUIDE.md'
+      - '.github/workflows/package-alpha.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify package inputs and create reproducible ZIP
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, zipfile, os
+          addon = pathlib.Path("StrutYourBootsy")
+          addon.mkdir(exist_ok=True)
+          paths = ("StrutYourBootsy.toc", "Core.lua", "Network.lua", "Main.lua")
+          for p in paths:
+              assert pathlib.Path(p).is_file(), f"Missing required addon file: {p}"
+          toc = pathlib.Path(paths[0]).read_text()
+          assert "Core.lua\nNetwork.lua\nMain.lua" in toc, "TOC load order mismatch"
+          zip_name = "StrutYourBootsy-DEV02-TESTER-" + os.environ["GITHUB_SHA"][:7] + ".zip"
+          with zipfile.ZipFile(zip_name, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as out:
+              for path in (*paths, "docs/ALPHA_TESTER_GUIDE.md"):
+                  file = pathlib.Path(path)
+                  target = addon / ("TESTER_GUIDE.md" if path.startswith("docs/") else path)
+                  entry = zipfile.ZipInfo(str(target), date_time=(2026, 11, 18, 0, 0, 0))
+                  entry.compress_type = zipfile.ZIP_DEFLATED
+                  entry.external_attr = 0o644 << 16
+                  out.writestr(entry, file.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+          with zipfile.ZipFile(zip_name) as package:
+              assert package.testzip() is None
+              expected = {f"StrutYourBootsy/{x}" for x in paths} | {"StrutYourBootsy/TESTER_GUIDE.md"}
+              assert set(package.namelist()) == expected
+          digest = hashlib.sha256(pathlib.Path(zip_name).read_bytes()).hexdigest()
+          print(f"PACKAGE={zip_name}")
+          print(f"SHA256={digest}")
+          pathlib.Path("PACKAGE_SHA256.txt").write_text(f"{digest}  {zip_name}\n")
+          PY
+      - name: Upload test package (extract inner ZIP and share via Discord)
+        uses: actions/upload-artifact@v4
+        with:
+          name: StrutYourBootsy-DEV02-Discord-Tester
+          path: |
+            StrutYourBootsy-DEV02-TESTER-*.zip
+            PACKAGE_SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
