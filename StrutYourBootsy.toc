@@ -1,0 +1,7 @@
+## Interface: 120105
+## Title: Strut Your Bootsy
+## Notes: Raid-based transmog runway contests
+## Version: 0.1.0-alpha
+## SavedVariablesPerCharacter: SYBCharacterDB
+Core.lua
+Main.lua

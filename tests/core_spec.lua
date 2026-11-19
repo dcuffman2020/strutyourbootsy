@@ -1,0 +1,40 @@
+-- Run with a standalone Lua interpreter from the repo root:
+--   lua tests/core_spec.lua
+local namespace = {}
+local loader = assert(loadfile("Core.lua"))
+loader("StrutYourBootsy", namespace)
+local Core = assert(namespace.Core)
+local function fails(ok, reason)
+    assert(ok == false and type(reason) == "string", "expected rejection")
+end
+local s = Core.New("Admin-Realm", 2)
+for i = 1, 5 do assert(Core.Register(s, "Player" .. i, "contestant")) end
+assert(Core.Register(s, "Viewer", "spectator"))
+fails(Core.Register(s, "Admin-Realm", "contestant"))
+fails(Core.Register(s, "Player1", "spectator"))
+fails(Core.CanStart(s, 1))
+assert(Core.CanStart(s, 0))
+local order = {"Player1", "Player2", "Player3", "Player4", "Player5"}
+assert(Core.Start(s, order, 0))
+assert(Core.BeginRunway(s))
+assert(Core.BeginVoting(s))
+fails(Core.SubmitBallot(s, "Player1", { Player1 = 5 }))
+fails(Core.SubmitBallot(s, "Admin-Realm", { Player2 = 5 }))
+fails(Core.SubmitBallot(s, "Viewer", { Player2 = 6 }))
+assert(Core.SubmitBallot(s, "Viewer", { Player1 = 5, Player2 = 4, Player3 = 3, Player4 = 2, Player5 = 1 }))
+fails(Core.SubmitBallot(s, "Viewer", { Player1 = 1 }))
+assert(Core.CloseVoting(s))
+assert(s.scores[1].Player1 == 5)
+assert(Core.NextRound(s))
+assert(Core.BeginRunway(s))
+assert(Core.BeginVoting(s))
+assert(Core.SubmitBallot(s, "Viewer", { Player1 = 4, Player2 = 5, Player3 = 3, Player4 = 2 }))
+assert(Core.CloseVoting(s))
+local results = assert(Core.FinalResults(s))
+assert(#results == 4) -- Player5 did not receive a second-round rating.
+assert(results[1].name == "Player1" or results[1].name == "Player2")
+assert(results[1].average == 4.5)
+assert(Core.Pause(s))
+assert(Core.Resume(s))
+assert(Core.End(s))
+print("Core spec passed")
