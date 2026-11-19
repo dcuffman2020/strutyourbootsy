@@ -20,7 +20,13 @@ function S.Register(self,roster,senderGuid,message)
  local ok,reason=Authority.Validate(self.authority,roster,senderGuid,message)
  if not ok then return false,reason end
  if message.payload~="contestant" and message.payload~="spectator" then return false,"invalid_role" end
- if self.guids[senderGuid] then return false,"already_registered" end
+ if self.guids[senderGuid] then
+  if self.guids[senderGuid]~=message.payload then return false,"role_locked" end
+  -- An ACK may have been throttled or lost. Accept a fresh sequence number
+  -- for the same role so the leader can re-send confirmation idempotently.
+  Authority.Accept(self.authority,senderGuid,message)
+  return true,"already_registered"
+ end
  local member=roster[senderGuid]
  if type(member.name)~="string" or member.name=="" then return false,"missing_identity" end
  ok,reason=Core.Register(self.state,member.name,message.payload)
