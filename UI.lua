@@ -3,12 +3,12 @@ local UI = {}
 ns.UI = UI
 
 local window, launcher
-local title, summary, details, status, actionNotice, roleHint, list, listContent
-local primary, secondary, contestant, spectator, confirmPassive
+local brand, title, summary, details, status, actionNotice, roleHint, list, listContent
+local primary, secondary, contestant, spectator, confirmPassive, skipPrep
 local context = {}
 local rows = {}
 local selectedRole, selectedObserver, sessionId
-local prepDeadline, prepSeconds, prepTick = nil, nil, 0
+local prepDeadline, prepSeconds, prepTick, prepHost, prepBlocked = nil, nil, 0, false, false
 local gold = {0.88, 0.71, 0.42}
 local pale = {0.92, 0.94, 0.96}
 local muted = {0.62, 0.68, 0.74}
@@ -33,6 +33,8 @@ local messages = {
     wrong_phase="Registration is closed.",
     minimum_five_contestants="Register at least five connected contestants.",
     registration_pending="Wait for pending addon users to confirm their roles.",
+    preparation_running="Wait for the preparation timer to finish.",
+    practice_solo_only="Leave your party or raid to use solo practice.",
     preparation_unavailable="Could not start preparation. Try Start again.",
     invalid_runway_order="Roster and registrations differ. Check the roster or reopen registration.",
     already_registered="The leader already registered your role. Refresh to confirm it.",
@@ -76,10 +78,13 @@ local function refreshPreparationClock()
     local remaining = math.min(context.preparationSeconds, math.max(0, prepDeadline - context.serverNow()))
     if remaining == prepSeconds then return end
     prepSeconds = remaining
+    if prepHost then primary:SetEnabled(remaining == 0 and not prepBlocked) end
     if remaining > 0 then
         status:SetText(("Time to prepare: %d:%02d"):format(math.floor(remaining / 60), remaining % 60))
     else
-        status:SetText("Preparation complete. This alpha ends here.")
+        status:SetText(prepBlocked and "A contestant is unavailable. Wait for them to return."
+            or prepHost and "Preparation complete. Begin the runway."
+            or "Preparation complete. Waiting for the raid leader.")
     end
 end
 
@@ -108,7 +113,7 @@ local function build()
         refreshPreparationClock()
     end)
 
-    label(window, "STRUT YOUR BOOTSY", 14, 28, -25, gold)
+    brand = label(window, "STRUT YOUR BOOTSY", 14, 28, -25, gold)
     title = label(window, "Welcome to the runway", 24, 28, -56)
     local overview = panel(-99, 111)
     summary = label(overview, "", 14, 18, -16, pale, 372)
@@ -137,6 +142,9 @@ local function build()
         local p = context.getProjection()
         if p.isLeader then
             if p.sessionId and p.phase == "registration" then context.start()
+            elseif p.phase == "preparation" then context.beginRunway()
+            elseif p.phase == "runway" then context.advanceRunway()
+            elseif p.phase == "runway_complete" and p.practice then context.restartPractice()
             else context.openRegistration() end
         else
             context.submitRole(p.submittedRole or selectedRole)
@@ -144,7 +152,8 @@ local function build()
     end)
     secondary = button(window, "Refresh", 101, 28, -485, function()
         local p = context.getProjection()
-        if p.isLeader and p.sessionId and p.phase == "registration" then context.cancel()
+        if p.practice then context.leavePractice()
+        elseif p.isLeader and p.sessionId and p.phase == "registration" then context.cancel()
         else context.refresh() end
     end)
     confirmPassive = button(window, "Confirm no addon", 140, 135, -485, function()
@@ -157,13 +166,18 @@ local function build()
     end)
     confirmPassive:SetScript("OnLeave", GameTooltip_Hide)
 
+    skipPrep = button(window, "Skip countdown", 140, 135, -485, function() context.skipPreparation() end)
     local close = CreateFrame("Button", nil, window, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -7, -7)
     window:Hide()
     table.insert(UISpecialFrames, "SYBAdminWindow")
 end
 
-local function updateRoster(members)
+local function updateRoster(members, runway)
+    local pitch, height = runway and 24 or 26, runway and 120 or 98
+    list:ClearAllPoints()
+    list:SetPoint("TOPLEFT", 17, runway and -30 or -42)
+    list:SetSize(351, height)
     local stillSelected
     for index, member in ipairs(members) do
         local row = rows[index]
@@ -172,19 +186,29 @@ local function updateRoster(members)
                 selectedObserver = self.member
                 UI.Refresh()
             end)
-            row:SetHeight(25)
             rows[index] = row
         end
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, -(index - 1) * pitch)
+        row:SetHeight(pitch - 1)
         row.member = member
         local selected = selectedObserver and selectedObserver.guid == member.guid
         if selected and member.presence == "unknown" then stillSelected = member end
         local role = member.role and (" / " .. member.role) or ""
-        row:SetText((selected and "> " or "") .. member.name .. "  " .. presenceLabels[member.presence] .. role)
-        row:SetEnabled(member.presence == "unknown")
+        if runway then
+            row:SetText(member.name .. "  ·  " .. member.label)
+            -- Text is read-only, but stays legible instead of using the disabled skin.
+            row:SetEnabled(true)
+            row:EnableMouse(false)
+        else
+            row:SetText((selected and "> " or "") .. member.name .. "  " .. presenceLabels[member.presence] .. role)
+            row:EnableMouse(true)
+            row:SetEnabled(member.presence == "unknown")
+        end
         row:Show()
     end
     for i = #members + 1, #rows do rows[i]:Hide() end
-    listContent:SetHeight(math.max(98, #members * 26))
+    listContent:SetHeight(math.max(height, #members * pitch))
     selectedObserver = stillSelected
 end
 
@@ -199,13 +223,15 @@ function UI.Refresh()
     local lobby = registration and p.isLeader
     local chooser = registration and not p.isLeader and p.lobbyState ~= "late_joiner" and p.lobbyState ~= "disconnected"
     local prompt
-    prepDeadline, prepSeconds, prepTick = nil, nil, 0
+    prepDeadline, prepSeconds, prepTick, prepHost, prepBlocked = nil, nil, 0, false, false
+    brand:SetText(p.practice and "STRUT YOUR BOOTSY  ·  PRACTICE MODE" or "STRUT YOUR BOOTSY")
     primary:SetShown(true)
-    list:SetShown(lobby == true)
+    list:SetShown(lobby == true or (p.phase == "runway" and p.runwayOrder ~= nil))
     contestant:SetShown(chooser == true)
     spectator:SetShown(chooser == true)
-    confirmPassive:SetShown(lobby == true)
-    secondary:SetText(lobby and "Cancel" or "Refresh")
+    confirmPassive:SetShown(lobby == true and not p.practice)
+    skipPrep:SetShown(p.practice == true and p.phase == "preparation")
+    secondary:SetText(p.practice and "Exit practice" or lobby and "Cancel" or "Refresh")
 
     if lobby then
         title:SetText("Registration lobby")
@@ -218,7 +244,8 @@ function UI.Refresh()
         primary:SetText("Start contest")
         primary:SetEnabled(p.lobbyState == "ready_to_start")
         prompt = p.lobbyState == "ready_to_start"
-            and "Ready to start. The administrator does not compete or vote."
+            and (p.practice and "Five fictional contestants. No raid messages are sent."
+                or "Ready to start. The administrator does not compete or vote.")
             or (messages[p.lobbyState] or "Start is unavailable. Refresh the raid roster and check /syb status.")
     elseif chooser then
         local role = p.localRole or p.submittedRole or selectedRole
@@ -251,10 +278,43 @@ function UI.Refresh()
         roleHint:SetText(role == "Contestant" and "Get your outfit ready."
             or role == "Administrator" and "Give contestants time to get their outfits ready."
             or "Contestants are getting their outfits ready.")
-        primary:SetShown(false)
+        prepHost, prepBlocked = p.isLeader == true, p.runwayBlocked == true
+        primary:SetText("Begin runway")
+        primary:SetShown(prepHost)
         primary:SetEnabled(false)
         prepDeadline = p.preparation and p.preparation.endsAt
         prompt = prepDeadline and "" or "Syncing the countdown with the raid leader…"
+    elseif p.phase == "runway" and p.runway then
+        local r = p.runway
+        title:SetText("Round 1 of 1: Runway")
+        summary:SetText(("Presenting  %d of %d\n%s\n%s"):format(r.index,r.total,r.current,
+            r.upcoming and "Up next: " .. r.upcoming or "Final presentation"))
+        if p.runwayOrder then
+            details:SetText("Runway order")
+            roleHint:SetText("")
+            local order = {}
+            for i,name in ipairs(p.runwayOrder) do
+                order[i] = {name=name,label=i<r.index and "Presented" or i==r.index and "Presenting"
+                    or i==r.index+1 and "Up next" or "Waiting"}
+            end
+            updateRoster(order,true)
+        else
+            details:SetText("Runway status")
+            roleHint:SetText("The raid leader advances the runway.")
+        end
+        primary:SetText(r.index==r.total and "Finish runway" or "Next contestant")
+        primary:SetShown(p.isLeader == true)
+        primary:SetEnabled(p.isLeader == true and not p.runwayBlocked)
+        prompt = p.runwayBlocked and "A contestant is unavailable. Wait for them to return." or ""
+    elseif p.phase == "runway_complete" and p.runway then
+        title:SetText("Runway complete")
+        summary:SetText(("%d of %d contestants presented."):format(p.runway.total,p.runway.total))
+        details:SetText("End of this test build")
+        roleHint:SetText("Voting is not included yet.")
+        primary:SetText("Practice again")
+        primary:SetShown(p.practice == true)
+        primary:SetEnabled(p.practice == true)
+        prompt = ""
     else
         title:SetText("Welcome to the runway")
         summary:SetText((IsInRaid() and "In raid" or "Not in a raid. Join a raid to participate.") ..
@@ -272,9 +332,14 @@ function UI.Refresh()
     refreshPreparationClock()
 end
 
-function UI.Toggle()
+function UI.Show()
     if not window then build() end
-    if window:IsShown() then window:Hide() else window:Show(); UI.Refresh() end
+    window:Show()
+    UI.Refresh()
+end
+
+function UI.Toggle()
+    if window and window:IsShown() then window:Hide() else UI.Show() end
 end
 
 local function positionLauncher(angle)

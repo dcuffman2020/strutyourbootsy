@@ -56,20 +56,47 @@ function Core.Start(state, order, pendingAddonUsers)
     end
     state.order = order
     state.round = 1
-    state.phase = "preparation"
+    state.phase, state.runwayIndex = "preparation", nil
     state.version = state.version + 1
     return true
 end
 
+-- Fisher–Yates over a copy: the caller's roster is not mutated.
+function Core.Shuffle(order, random)
+    local shuffled = {}
+    for i, name in ipairs(order) do shuffled[i] = name end
+    for i = #shuffled, 2, -1 do
+        local j = 1 + math.floor(random() * i)
+        shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+    end
+    return shuffled
+end
+
+function Core.RunwayStatus(state)
+    local i = state.runwayIndex
+    if not i then return nil end
+    local active = state.phase == "runway"
+    return {index=i, total=#state.order, current=active and state.order[i] or nil,
+        upcoming=active and state.order[i+1] or nil}
+end
+
 function Core.BeginRunway(state)
     if state.phase ~= "preparation" then return false, "wrong_phase" end
-    state.phase = "runway"
+    state.phase, state.runwayIndex = "runway", 1
+    state.version = state.version + 1
+    return true
+end
+
+function Core.AdvanceRunway(state)
+    if state.phase ~= "runway" then return false, "wrong_phase" end
+    if state.runwayIndex >= #state.order then state.phase = "runway_complete"
+    else state.runwayIndex = state.runwayIndex + 1 end
     state.version = state.version + 1
     return true
 end
 
 function Core.BeginVoting(state)
-    if state.phase ~= "runway" then return false, "wrong_phase" end
+    if state.phase ~= "runway_complete" then return false, "wrong_phase" end
     state.phase = "voting"
     state.ballots[state.round] = {}
     state.version = state.version + 1
@@ -123,7 +150,7 @@ function Core.NextRound(state)
     if state.phase ~= "round_results" then return false, "wrong_phase" end
     if state.round >= state.rounds then return false, "final_round" end
     state.round = state.round + 1
-    state.phase = "preparation"
+    state.phase, state.runwayIndex = "preparation", nil
     state.version = state.version + 1
     return true
 end
