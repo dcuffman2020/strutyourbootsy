@@ -3,6 +3,7 @@ local Core, Network, UI = ns.Core, ns.Network, ns.UI
 local frame = CreateFrame("Frame")
 local state, developmentState, network
 local roleRequest, notice
+local practice, practiceCounter
 local sequence = 0
 local lastSession = 0
 -- Small one-round alpha pool; the full catalog and custom theme setup come later.
@@ -70,7 +71,12 @@ local function onNetworkCommand(action, sender, message)
                 order[#order + 1] = member.name
             end
         end
-        return Core.Start(state, order, projection.presence.addon_pending + projection.presence.unknown)
+        return Core.Start(state, Core.Shuffle(order, math.random), projection.presence.addon_pending + projection.presence.unknown)
+    end
+    if action == "BEGIN_RUNWAY" or action == "ADVANCE" then
+        local operation = action == "BEGIN_RUNWAY" and Core.BeginRunway or Core.AdvanceRunway
+        local ok, reason = operation(state)
+        return ok, reason, ok and Core.RunwayStatus(state) or nil
     end
     return false, "unsupported_command"
 end
@@ -138,13 +144,68 @@ local function submitRole(role)
     return ok, reason
 end
 
+local demoNames = {"Cinderstep", "Valeweaver", "Mossmantle", "Copperwink", "Thistledawn"}
+
+local function grouped()
+    return IsInRaid() or (IsInGroup and IsInGroup())
+end
+
+local function practiceView()
+    local c = practice.contest
+    return {practice=true, isLeader=true, sessionId=practice.id, phase=c.phase,
+        contestants=#demoNames, spectators=0, pendingResponses=0, members=practice.members,
+        lobbyState="ready_to_start", discoveryComplete=true, preparation=practice.preparation,
+        runway=Core.RunwayStatus(c), runwayOrder=c.order, notice=notice}
+end
+
+local function enterPractice()
+    if grouped() then return false, "practice_solo_only" end
+    if not practice then
+        practiceCounter = (practiceCounter or 0) + 1
+        local c = Core.New("Practice host", 1)
+        local members = {}
+        for _, name in ipairs(demoNames) do
+            assert(Core.Register(c, name, "contestant"))
+            members[#members+1] = {name=name,guid=name,presence="addon_ready",role="contestant"}
+        end
+        practice = {id="practice-" .. practiceCounter, contest=c, members=members}
+    end
+    notice = nil
+    UI.Show()
+    return true
+end
+
+local function leavePractice()
+    practice, notice = nil, nil
+    UI.Refresh()
+end
+
+local function practiceAction(action)
+    if not practice or grouped() then return false, "practice_solo_only" end
+    local c = practice.contest
+    if action == "START" then
+        local ok, reason = Core.Start(c, Core.Shuffle(demoNames, math.random), 0)
+        if not ok then return false,reason end
+        practice.preparation = {theme=chooseAlphaTheme(),endsAt=GetServerTime()+Network.PREPARATION_SECONDS}
+        return true
+    end
+    if action == "BEGIN_RUNWAY" then
+        if not practice.preparation or GetServerTime()<practice.preparation.endsAt then return false,"preparation_running" end
+        return Core.BeginRunway(c)
+    end
+    if action == "ADVANCE" then return Core.AdvanceRunway(c) end
+    return false,"unsupported_command"
+end
+
 local function view()
+    if practice then return practiceView() end
     local p = network and network:GetProjection() or {}
     local pending = roleRequest and network and network.pending[roleRequest.id]
     if p.lobbyState == "ready_to_start" and state then
         local ready, reason = Core.CanStart(state, p.pendingResponses + p.presence.unknown)
         if not ready then p.lobbyState = reason end
     end
+    if p.isLeader and state and p.runway then p.runwayOrder = state.order end
     p.notice = notice
     if not p.localRole and pending and pending.status == "pending" then
         p.submittedRole = pending.message.role
@@ -155,6 +216,10 @@ local function view()
 end
 
 local function refresh()
+    if practice then
+        if not grouped() then UI.Refresh(); return end
+        leavePractice()
+    end
     if network then
         network:RefreshRoster()
         network:Poll()
@@ -178,13 +243,15 @@ local function run(action, ...)
     return ok, reason
 end
 
-local function startContest()
-    local ok, reason = network:StartContest(commandId())
-    if not ok then return false, reason end
-    local id = network.sessionId
-    if not network:BroadcastPreparation() then
+local function adminAction(action)
+    if practice then return practiceAction(action) end
+    if not network then return false,"not_registered" end
+    local ok, reason = network:AdminCommand(action,commandId())
+    if not ok then return false,reason end
+    local id, version = network.sessionId, network.version
+    if not network:BroadcastContest() then
         C_Timer.After(Network.SEND_WINDOW + 0.25, function()
-            if network.sessionId == id then network:BroadcastPreparation() end
+            if not practice and network.sessionId == id and network.version == version then network:BroadcastContest() end
         end)
     end
     return true
@@ -200,7 +267,17 @@ frame:SetScript("OnEvent", function(_, event, ...)
             getProjection=view, refresh=refresh, preferences=SYBCharacterDB.preferences,
             serverNow=GetServerTime, preparationSeconds=Network.PREPARATION_SECONDS,
             openRegistration=function() run(openRegistration) end,
-            start=function() run(startContest) end,
+            start=function() run(adminAction,"START") end,
+            beginRunway=function() run(adminAction,"BEGIN_RUNWAY") end,
+            advanceRunway=function() run(adminAction,"ADVANCE") end,
+            leavePractice=leavePractice,
+            restartPractice=function() leavePractice(); enterPractice() end,
+            skipPreparation=function()
+                if practice and practice.contest.phase=="preparation" and practice.preparation then
+                    practice.preparation.endsAt=GetServerTime()
+                    UI.Refresh()
+                end
+            end,
             cancel=function() run(function() return network:CancelRegistration() end) end,
             submitRole=function(role) run(submitRole, role) end,
             confirmPassive=function(name, guid)
@@ -210,7 +287,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         })
         schedulePoll()
         say("Loaded. /syb opens the contest window.")
-    elseif event == "CHAT_MSG_ADDON" and network then
+    elseif event == "CHAT_MSG_ADDON" and network and not practice then
         local prefix, message, channel, sender = ...
         if prefix == Network.PREFIX then
             network:RefreshRoster()
@@ -227,9 +304,14 @@ SlashCmdList.STRUTYOURBOOTSY = function(input)
     input = (input or ""):lower():match("^%s*(.-)%s*$")
     if input == "" or input == "show" or input == "toggle" then
         UI.Toggle()
+    elseif input == "practice" then
+        local ok = enterPractice()
+        if not ok then say("Leave your party or raid before starting solo practice.") end
+    elseif input == "practice stop" then
+        if practice then leavePractice(); say("Solo practice ended.") end
     elseif input == "status" then
         local p = view()
-        local localStatus = developmentState and ("local " .. developmentState.phase .. " round " ..
+        local localStatus = p.practice and ("Practice mode: " .. p.phase) or developmentState and ("local " .. developmentState.phase .. " round " ..
             developmentState.round .. "/" .. developmentState.rounds) or "no local test contest"
         say(localStatus .. "; raid leader: " .. (p.leader or "none") ..
             "; session: " .. (p.sessionId or "none") .. " v" .. (p.version or 0) ..
@@ -238,9 +320,10 @@ SlashCmdList.STRUTYOURBOOTSY = function(input)
         developmentState = Core.New(UnitName("player"), 1)
         say("Created a local test session. Multiplayer controls are unaffected.")
     elseif input == "devnetstart" then
+        if practice then say("Exit solo practice before opening raid registration."); return end
         local ok, reason = run(openRegistration)
         say(ok and "Raid discovery queued." or ("Raid discovery: " .. reason))
     else
-        say("Commands: /syb, /syb status, /syb devstart, /syb devnetstart")
+        say("Commands: /syb, /syb practice, /syb status, /syb devstart, /syb devnetstart")
     end
 end
