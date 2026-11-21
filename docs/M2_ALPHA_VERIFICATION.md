@@ -20,3 +20,20 @@ The raid leader can open a one-round alpha registration session without the conf
 6. Start the contest. Wait for each client's next refresh and verify that registration closes on all addon clients. In a fresh raid registration, transfer raid leadership and verify the previous registration ends. Repeat with cross-realm characters.
 
 Real-client validation is pending for Escape handling, UI scale and minimap overlap, Retail chat delivery and throttling, roster ordering during reconnects and transfers, and visual acceptance against UX-03 and UX-04. Full post-start disconnect recovery is outside this registration slice.
+
+
+## First live registration test and Preparation checkpoint
+
+Doug reported that the leader opened registration and six raid members were present in total. Other players could join and select their roles; no tester reported a Lua error. The leader reported Start was disabled. This supports registration working in the live raid, not a live pass for Start. No contemporaneous readiness diagnostic was captured, so the reason for the original disabled button is unknown.
+
+The follow-up keeps the current readiness explanation separate from old action notices and adds a dedicated Preparation view. The mocked Retail suite now verifies one leader and exactly five contestants, verifies that fewer than five cannot start, and asserts that each client reaches Preparation with the correct role. The existing larger fixture still exercises the spectator, no-addon observer and reconnect cases. The protocol and eligibility rules were not changed.
+
+At the next planned raid test, use the same ZIP on all addon clients. With one leader and five confirmed contestants, let discovery complete. If Start stays grey, capture its on-screen explanation and the `lobby:` value from `/syb status` before closing the lobby. If Start works, all six clients should show **Round 1 of 1: Preparation**. On slower clients, allow up to 25 seconds for the next sync or use **Refresh**. No separate raid session is required just to recheck this.
+
+### Next slice: M3 contest execution
+
+- Build the approved theme reveal and synchronized preparation timer (UX-05; EP-05/06). Include a clear end-of-preparation state controlled by the raid leader, and keep future-round themes hidden.
+- Next, move from preparation into a randomized runway with leader-controlled advance (UX-06/20; EP-07). Verify that the last presentation hands off to voting.
+- Implement 1–5-star voting and round progression after the runway. The configuration wizard, results and full disconnect recovery are still outstanding.
+
+This checkpoint does not implement theme selection/reveal, the countdown, or any gameplay after Preparation. It is not a playable contest release.

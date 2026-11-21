@@ -1,33 +1,16 @@
-# Strut Your Bootsy — Developer Alpha / Multiplayer Smoke Test
+# Strut Your Bootsy | Preparation checkpoint
 
-**Experimental test build, not a functional transmog contest.** Free, unofficial community addon. Do not use during important group content. No sensitive credentials, Codex, GitHub account, or other software is required for testers.
+This is a private test build, not a playable contest. It verifies lobby readiness and the handoff into Preparation. It does not include the theme reveal, timer, runway, or voting.
 
-## Quick install (Windows and macOS)
-1. Fully exit World of Warcraft Retail.
-2. Extract the ZIP. Inside, find the folder **StrutYourBootsy** containing `StrutYourBootsy.toc`, `Core.lua`, `Network.lua`, `Main.lua` and this guide.
-3. Copy **StrutYourBootsy** into `World of Warcraft/_retail_/Interface/AddOns/`. Do not add an extra nested StrutYourBootsy folder. The resulting file is `_retail_/Interface/AddOns/StrutYourBootsy/StrutYourBootsy.toc`.
-4. Start Retail. At character select, use **AddOns** to verify **Strut Your Bootsy** is enabled. Check that it is not labeled incompatible/out of date.
-5. Log in and type `/syb status`. If you see an error, take a screenshot and share it with the organizer. You should not be asked to provide credentials or other personal data.
+## Install
 
-## Test session
-1. Join a **raid group** with the organizer. The organizer must be the raid leader. Two members are enough for a communication smoke test; you are not running the five-contestant contest.
-2. With both clients logged in and the addon enabled, run `/syb status`.
-3. The organizer (and ONLY the raid leader) runs `/syb devnetstart`. This starts developer-only addon discovery; it is not the final contest.
-4. After discovery, run `/syb status` again and report the chat output. Look for a session identifier and version on the participant client, and avoid posting any account-identifying details in public channels.
-5. Organizer collects success/error screenshots and notes. No UI, transmog judging, or gameplay automation is expected yet.
+1. Fully exit WoW Retail. Extract the ZIP and copy the one `StrutYourBootsy` folder into `_retail_/Interface/AddOns/`. The manifest must be at `_retail_/Interface/AddOns/StrutYourBootsy/StrutYourBootsy.toc`, without a second nested addon folder.
+2. Enable Strut Your Bootsy on the character screen. In game, use `/syb` to open the window. `/syb status` prints diagnostics. No account credentials or additional installer are needed.
 
-## Troubleshooting
-- If commands are absent, confirm folder nesting and addon enabled state, then `/reload`.
-- If an error appears, enable Lua script error reporting with `/console scriptErrors 1` followed by `/reload`. Share the **error message**, not saved variables or account details. After testing you may restore `/console scriptErrors 0`.
-- The organizer should record WoW client interface: `/dump select(4, GetBuildInfo())`. The package declares interface `120105`; report a mismatch.
-- Do not delete other addons or the `WTF` directory to troubleshoot.
-- Uninstall by fully exiting WoW and removing only `_retail_/Interface/AddOns/StrutYourBootsy`.
+## At the next scheduled raid test
 
-## Known limitations
-- No playable contest UI, real runway, voting, scores, or complete recovery behavior.
-- This test mainly verifies addon loading, HELLO/WELCOME discovery, and leader-authoritative multiplayer infrastructure.
-- No manual client-side role command is exposed in this build; authenticated ROLE messaging is covered in automated tests, not via a tester UI.
-- Some status/absence cases will show `insufficient_contestants` during this two-client check; that is expected.
-- The game addon uses only its WoW sandbox and does not need external apps or installers.
+1. Install the same build on all six players: one raid leader and five contestants. The leader opens registration from `/syb`. Each of the other five selects and confirms **Contestant**. Let discovery finish.
+2. When **Start contest** enables, click it once. The leader and all five contestants should see **Round 1 of 1: Preparation** after syncing. Allow up to 25 seconds or use **Refresh** if needed.
+3. If Start stays disabled, capture the readiness text above it and the `lobby:` value from `/syb status` before closing the lobby. No need to organize a separate raid for this checkpoint.
 
-Source and version: https://github.com/dcuffman2020/strutyourbootsy/pull/4 . This test package is generated only from reviewed repository Lua/TOC files, plus this guide.
+If the addon does not load, check the folder nesting. If an error appears, share the error message only, not your SavedVariables or account details. This package declares Retail interface `120105`. Do not delete other addons or the `WTF` directory.
