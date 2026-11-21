@@ -30,7 +30,12 @@ function methods:StopMovingOrSizing() self.moving = false end
 local function widget(parent)
     return setmetatable({scripts={}, events={}, parent=parent, shown=true, enabled=true}, widgets)
 end
-function methods:CreateFontString() return widget(self) end
+function methods:CreateFontString()
+    local label = widget(self)
+    self.labels = rawget(self, "labels") or {}
+    self.labels[#self.labels + 1] = label
+    return label
+end
 
 local function makeClient(index)
     local character = index and roster[index] or {name="Solo", guid="Solo"}
@@ -169,6 +174,26 @@ solo.slash("devnetstart")
 assert(solo.frames[1].events.CHAT_MSG_ADDON)
 assert(solo.chat[#solo.chat]:find("not_raid_leader", 1, true))
 
+local function assertLabel(client, text)
+    for _, frame in ipairs(client.frames) do
+        for _, label in ipairs(rawget(frame, "labels") or {}) do
+            if rawget(label, "text") == text then return end
+        end
+    end
+    error("Missing UI label: " .. text)
+end
+
+-- A previous transport error must not conceal today's Start blocker.
+solo.ns.UI.Initialize({getProjection=function()
+    return {sessionId="mock", phase="registration", isLeader=true, members={},
+        contestants=5, spectators=0, pendingResponses=0,
+        lobbyState="discovery_pending", notice="transport_failed"}
+end})
+solo.ns.UI.Refresh()
+assertLabel(solo, "Discovery is running. Give raid members time to respond.")
+assertLabel(solo, "The game rejected the message. Check your raid connection and retry.")
+assert(not solo.click("Start contest"))
+
 local group = {}
 for i = 1, 7 do group[i] = makeClient(i); group[i].event("PLAYER_LOGIN"); group[i].slash("") end
 local leader = group[1]
@@ -233,4 +258,33 @@ late.slash("")
 advance(6)
 status(late, "late_joiner")
 assert(not late.click("Confirm role"))
+-- Re-create the reported raid size exactly: current leader and five contestants,
+-- with no spectator or passive-observer row.
+roster, clients, packets = {}, {}, {}
+for i = 1, 6 do roster[i] = {name="Player" .. i, guid="GUID-" .. i, online=true} end
+group = {}
+for i = 1, 6 do
+    group[i] = makeClient(i)
+    group[i].event("PLAYER_LOGIN")
+    group[i].slash("")
+end
+leader = group[1]
+assert(leader.click("Open registration"))
+deliver()
+for i = 2, 6 do
+    advance(6)
+    assert(not leader.click("Start contest"))
+    assert(group[i].click("Contestant") and group[i].click("Confirm role"))
+    deliver()
+    if group[i].click("Confirm role") then deliver() end
+end
+status(leader, "lobby: ready_to_start")
+assert(leader.click("Start contest"))
+advance(24)
+for i, member in ipairs(group) do
+    assertLabel(member, "Round 1 of 1: Preparation")
+    assertLabel(member, "Registration is closed.\nYour role: " .. (i == 1 and "Administrator" or "Contestant"))
+    assert(not member.click("Start contest"))
+    assert(not member.click("Confirm role"))
+end
 print("Registration and mocked WoW UI spec passed")

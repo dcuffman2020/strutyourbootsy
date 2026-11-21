@@ -3,7 +3,7 @@ local UI = {}
 ns.UI = UI
 
 local window, launcher
-local title, summary, details, status, roleHint, list, listContent
+local title, summary, details, status, actionNotice, roleHint, list, listContent
 local primary, secondary, contestant, spectator, confirmPassive
 local context = {}
 local rows = {}
@@ -71,7 +71,7 @@ end
 
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
-    window:SetSize(465, 506)
+    window:SetSize(465, 537)
     window:SetPoint("CENTER")
     window:SetFrameStrata("DIALOG")
     window:SetMovable(true)
@@ -110,8 +110,9 @@ local function build()
     listContent:SetSize(351, 98)
     list:SetScrollChild(listContent)
 
-    status = label(window, "", 14, 29, -392, gold, 398)
-    primary = button(window, "Open registration", 152, 285, -457, function()
+    actionNotice = label(window, "", 13, 29, -392, muted, 398)
+    status = label(window, "", 14, 29, -436, gold, 398)
+    primary = button(window, "Open registration", 152, 285, -485, function()
         local p = context.getProjection()
         if p.isLeader then
             if p.sessionId and p.phase == "registration" then context.start()
@@ -120,12 +121,12 @@ local function build()
             context.submitRole(p.submittedRole or selectedRole)
         end
     end)
-    secondary = button(window, "Refresh", 101, 28, -457, function()
+    secondary = button(window, "Refresh", 101, 28, -485, function()
         local p = context.getProjection()
         if p.isLeader and p.sessionId and p.phase == "registration" then context.cancel()
         else context.refresh() end
     end)
-    confirmPassive = button(window, "Confirm no addon", 140, 135, -457, function()
+    confirmPassive = button(window, "Confirm no addon", 140, 135, -485, function()
         if selectedObserver then context.confirmPassive(selectedObserver.name, selectedObserver.guid) end
     end)
     confirmPassive:SetScript("OnEnter", function(self)
@@ -177,6 +178,7 @@ function UI.Refresh()
     local lobby = registration and p.isLeader
     local chooser = registration and not p.isLeader and p.lobbyState ~= "late_joiner" and p.lobbyState ~= "disconnected"
     local prompt
+    primary:SetShown(true)
     list:SetShown(lobby == true)
     contestant:SetShown(chooser == true)
     spectator:SetShown(chooser == true)
@@ -193,7 +195,9 @@ function UI.Refresh()
         confirmPassive:SetEnabled(selectedObserver ~= nil and p.discoveryComplete == true)
         primary:SetText("Start contest")
         primary:SetEnabled(p.lobbyState == "ready_to_start")
-        prompt = messages[p.lobbyState] or "Ready to start. The administrator does not compete or vote."
+        prompt = p.lobbyState == "ready_to_start"
+            and "Ready to start. The administrator does not compete or vote."
+            or (messages[p.lobbyState] or "Start is unavailable. Refresh the raid roster and check /syb status.")
     elseif chooser then
         local role = p.localRole or p.submittedRole or selectedRole
         title:SetText("Choose your role")
@@ -212,19 +216,36 @@ function UI.Refresh()
         elseif p.awaiting then prompt = "Role submitted. Waiting for the raid leader."
         elseif p.timedOut then prompt = "Confirmation timed out. Retry the same request."
         else prompt = "Select a role and confirm it." end
+    elseif p.phase == "preparation" then
+        title:SetText("Round 1 of 1: Preparation")
+        local role = "Observer"
+        if p.isLeader then role = "Administrator"
+        elseif p.lobbyState ~= "late_joiner" then
+            if p.localRole == "contestant" then role = "Contestant"
+            elseif p.localRole == "spectator" then role = "Spectator" end
+        end
+        summary:SetText("Registration is closed.\nYour role: " .. role)
+        details:SetText("What happens next")
+        roleHint:SetText(role == "Contestant" and "Get your outfit ready."
+            or role == "Administrator" and "Give contestants time to get their outfits ready."
+            or "Contestants are getting their outfits ready.")
+        primary:SetShown(false)
+        primary:SetEnabled(false)
+        prompt = "This alpha ends at Preparation."
     else
         title:SetText("Welcome to the runway")
         summary:SetText((IsInRaid() and "In raid" or "Not in a raid. Join a raid to participate.") ..
             "\nRaid leader: " .. (p.leader or "none"))
         details:SetText("Contest status")
-        roleHint:SetText(p.phase == "preparation" and "The contest has started. Registration is closed." or
-            p.phase == "ended" and "The raid registration session ended." or
+        roleHint:SetText(p.phase == "ended" and "The raid registration session ended." or
             registration and "Raid registration is open." or "No active contest.")
         primary:SetText("Open registration")
         primary:SetEnabled(p.isLeader == true and (not p.sessionId or p.phase == "ended"))
         prompt = (registration or p.lobbyState == "late_joiner") and messages[p.lobbyState] or ""
     end
-    status:SetText(p.notice and (messages[p.notice] or ("Action failed (" .. p.notice .. "). Refresh and try again.")) or prompt)
+    local noticeText = p.notice and (messages[p.notice] or ("Action failed (" .. p.notice .. "). Refresh and try again."))
+    actionNotice:SetText(noticeText and noticeText ~= prompt and noticeText or "")
+    status:SetText(prompt)
 end
 
 function UI.Toggle()
