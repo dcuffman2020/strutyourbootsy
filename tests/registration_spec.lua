@@ -2,6 +2,7 @@
 local now = 100
 local roster, clients, packets = {}, {}, {}
 local addon = "StrutYourBootsy"
+local checkHiddenTheme = false
 for i = 1, 8 do
     roster[i] = {name="Player" .. i, guid="GUID-" .. i, online=true}
 end
@@ -78,6 +79,10 @@ local function makeClient(index)
         IsAddonMessagePrefixRegistered=function() return registered end,
         SendAddonMessage=function(prefix, wire, channel, target)
             if client.failSend then return 1 end
+            if checkHiddenTheme then
+                assert(not wire:find("|theme=", 1, true) and not wire:find("|prep_ends=", 1, true),
+                    "theme or deadline leaked during registration")
+            end
             packets[#packets + 1] = {prefix, wire, channel, target, character.name .. "-Realm"}
             return 0
         end,
@@ -119,7 +124,8 @@ local function deliver()
         assert(count < 150, "transport feedback loop")
         local packet = table.remove(packets, 1)
         for name, recipient in pairs(clients) do
-            if packet[3] == "RAID" or packet[4] == name then
+            if (packet[3] == "RAID" or packet[4] == name) and
+               not (recipient.missReveal and packet[3] == "RAID" and packet[2]:find("t=STATE", 1, true)) then
                 recipient.event("CHAT_MSG_ADDON", packet[1], packet[2], packet[3], packet[5])
             end
         end
@@ -131,6 +137,8 @@ local function advance(seconds)
     for _, client in pairs(clients) do
         local previous = client.timers
         client.timers = {}
+        local w = client.env.SYBAdminWindow
+        if w and w:IsShown() and w.scripts.OnUpdate then w.scripts.OnUpdate(w, seconds) end
         for _, timer in ipairs(previous) do
             if timer.due <= now then timer.run()
             else client.timers[#client.timers + 1] = timer end
@@ -257,6 +265,8 @@ late.event("PLAYER_ENTERING_WORLD")
 late.slash("")
 advance(6)
 status(late, "late_joiner")
+assertLabel(late, "Theme: Royalty")
+assertLabel(late, "Registration is closed.\nYour role: Observer")
 assert(not late.click("Confirm role"))
 -- Re-create the reported raid size exactly: current leader and five contestants,
 -- with no spectator or passive-observer row.
@@ -269,6 +279,7 @@ for i = 1, 6 do
     group[i].slash("")
 end
 leader = group[1]
+checkHiddenTheme = true
 assert(leader.click("Open registration"))
 deliver()
 for i = 2, 6 do
@@ -279,12 +290,31 @@ for i = 2, 6 do
     if group[i].click("Confirm role") then deliver() end
 end
 status(leader, "lobby: ready_to_start")
+checkHiddenTheme = false
+local finishingAt = group[1].env.GetServerTime() + 120
+group[6].missReveal = true
 assert(leader.click("Start contest"))
-advance(24)
+deliver()
+for i = 1, 5 do
+    assertLabel(group[i], "Theme: Royalty")
+    assertLabel(group[i], "Time to prepare: 2:00")
+end
+assertLabel(group[6], "Choose your role")
+advance(24) -- delayed WELCOME recovery must not restart the timer.
 for i, member in ipairs(group) do
     assertLabel(member, "Round 1 of 1: Preparation")
     assertLabel(member, "Registration is closed.\nYour role: " .. (i == 1 and "Administrator" or "Contestant"))
+    assertLabel(member, "Theme: Royalty")
+    assertLabel(member, "Time to prepare: 1:36")
     assert(not member.click("Start contest"))
     assert(not member.click("Confirm role"))
 end
-print("Registration and mocked WoW UI spec passed")
+advance(finishingAt - leader.env.GetServerTime() - 1)
+for _, member in ipairs(group) do assertLabel(member, "Time to prepare: 0:01") end
+advance(1)
+advance(8)
+for _, member in ipairs(group) do
+    assertLabel(member, "Preparation complete. This alpha ends here.")
+    assert(not member.click("Begin runway"))
+end
+print("Registration, theme reveal and preparation countdown spec passed")
