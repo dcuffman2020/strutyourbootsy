@@ -1,6 +1,7 @@
 local addonName, ns = ...
 local Core = ns.Core
 local Network = ns.Network
+local UI = ns.UI
 local frame = CreateFrame("Frame")
 local state
 local network
@@ -75,7 +76,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
             frame:RegisterEvent("GROUP_ROSTER_UPDATE")
             frame:RegisterEvent("PLAYER_ENTERING_WORLD")
         end
-        say("Foundation loaded. /syb status")
+        UI.Initialize({ getProjection=function() return network and network:GetProjection() end, say=say })
+        say("Foundation loaded. /syb opens the window; /syb status shows diagnostics.")
     elseif event == "CHAT_MSG_ADDON" and network then
         local prefix, message, channel, sender = ...
         network:Receive(prefix, message, channel, sender)
@@ -87,7 +89,9 @@ end)
 SLASH_STRUTYOURBOOTSY1 = "/syb"
 SlashCmdList.STRUTYOURBOOTSY = function(input)
     input = (input or ""):lower():match("^%s*(.-)%s*$")
-    if input == "status" then
+    if input == "" or input == "show" or input == "toggle" then
+        UI.Toggle()
+    elseif input == "status" then
         local localStatus = not state and "no local contest" or
             ("local " .. state.phase .. " round " .. state.round .. "/" .. state.rounds)
         if network then
