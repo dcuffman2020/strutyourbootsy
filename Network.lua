@@ -8,7 +8,9 @@ Network.__index = Network
 ns.Network = Network
 
 Network.PREFIX = "SYBDEV02"
-Network.SCHEMA = 1
+Network.SCHEMA = 2
+Network.CAPABILITY = "raid-comms-v2"
+Network.PREPARATION_SECONDS = 120
 Network.MAX_BYTES = 255
 Network.DISCOVERY_SECONDS = 10
 Network.MAX_RECENT_COMMANDS = 128
@@ -29,7 +31,7 @@ local rejectReasons = {
     unsupported_client=true, wrong_channel=true, wrong_phase=true,
     late_joiner=true, pending_addon_users=true, insufficient_contestants=true, discovery_pending=true,
     registration_closed=true, minimum_five_contestants=true, registration_pending=true,
-    invalid_runway_order=true,
+    invalid_runway_order=true, preparation_unavailable=true,
 }
 local validPhases = { registration=true, preparation=true, runway=true, voting=true,
     round_results=true, final_results=true, paused=true, ended=true }
@@ -108,12 +110,17 @@ end
 
 local allowedFields = {
     HELLO={capability=true}, PING={session_id=true, version=true},
-    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true},
-    STATE={session_id=true, version=true, phase=true},
+    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true},
+    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true},
     CMD={session_id=true, command_id=true, expected_version=true, action=true, role=true},
     ACK={session_id=true, command_id=true, version=true, reason=true},
     REJECT={session_id=true, command_id=true, version=true, reason=true},
 }
+
+local function validTheme(value)
+    -- Alpha theme names are bounded plain text, not WoW markup.
+    return type(value) == "string" and #value <= 48 and value:match("^[%a][%w ,'-]*$") ~= nil
+end
 
 local function validateFields(message)
     local allowed = allowedFields[message.type]
@@ -122,7 +129,7 @@ local function validateFields(message)
         if key ~= "type" and key ~= "schema" and not allowed[key] then return false, "malformed_payload" end
         if type(value) == "string" and #value > 80 then return false, "malformed_payload" end
     end
-    if message.type == "HELLO" and message.capability ~= "raid-comms-v1" then return false, "unsupported_client" end
+    if message.type == "HELLO" and message.capability ~= Network.CAPABILITY then return false, "unsupported_client" end
     if message.type == "PING" and (not message.session_id or not message.version) then return false, "malformed_payload" end
     if message.type == "WELCOME" and
        ((message.role and message.role ~= "contestant" and message.role ~= "spectator") or
@@ -130,6 +137,15 @@ local function validateFields(message)
     if message.type == "WELCOME" and (not message.session_id or not message.version or
        not message.phase or not message.leader_guid) then return false, "malformed_payload" end
     if message.type == "STATE" and (not message.session_id or not message.version or not message.phase) then return false, "malformed_payload" end
+    if message.type == "WELCOME" or message.type == "STATE" then
+        if message.phase == "preparation" then
+            if not validTheme(message.theme) or not integer(message.prep_ends, 1) then
+                return false, "malformed_payload"
+            end
+        elseif message.theme or message.prep_ends then
+            return false, "malformed_payload"
+        end
+    end
     if message.type == "CMD" and (not message.session_id or not message.command_id or
        not message.expected_version or not message.action) then return false, "malformed_payload" end
     if (message.type == "ACK" or message.type == "REJECT") and
@@ -230,7 +246,7 @@ function Network:BeginDiscovery()
     for _, member in pairs(self.roster) do
         if member.name ~= self.leader and not member.role then member.presence = "unknown" end
     end
-    return self:Send({ type="HELLO", capability="raid-comms-v1" }, "RAID")
+    return self:Send({ type="HELLO", capability=Network.CAPABILITY }, "RAID")
 end
 
 function Network:ClassifyDiscovery()
@@ -272,10 +288,19 @@ function Network:StartContest(commandId)
     }, self.leader)
 end
 
+-- A single leader-authored raid update avoids a per-client reveal burst.
+-- Poll/WELCOME provides eventual recovery if this packet is missed.
+function Network:BroadcastPreparation()
+    if not self:IsAuthority() or self.originalLeader ~= self.leader then return false, "not_authority" end
+    if self.phase ~= "preparation" or not self.preparation then return false, "wrong_phase" end
+    return self:Send({type="STATE", session_id=self.sessionId, version=self.version, phase=self.phase,
+        theme=self.preparation.theme, prep_ends=self.preparation.endsAt}, "RAID")
+end
+
 function Network:Poll()
     local leader = self.leader and self.roster[self.leader]
     if not leader or not leader.connected or self:IsAuthority() then return end
-    return self:Send({type="HELLO", capability="raid-comms-v1"}, "WHISPER", self.leader)
+    return self:Send({type="HELLO", capability=Network.CAPABILITY}, "WHISPER", self.leader)
 end
 
 function Network:StartSession(sessionId)
@@ -286,7 +311,7 @@ function Network:StartSession(sessionId)
     if type(sessionId) ~= "string" or sessionId == "" or #sessionId > 40 then return false, "invalid_session" end
     self.sessionId, self.version, self.phase = sessionId, 1, "registration"
     self.originalLeader = self.leader
-    self.discoveryStarted, self.lastRejected = nil, nil
+    self.discoveryStarted, self.lastRejected, self.preparation = nil, nil, nil
     self.absent = {}
     for name, member in pairs(self.roster) do
         member.role, member.joinedAfterStart = nil, false
@@ -306,7 +331,7 @@ end
 
 function Network:EndSession(reason)
     if not self.sessionId then return false, "no_session" end
-    self.phase = "ended"
+    self.phase, self.preparation = "ended", nil
     self.version = self.version + 1
     self:_emit("session_ended", { reason=reason, sessionId=self.sessionId, version=self.version })
     return true
@@ -403,6 +428,13 @@ function Network:_handleCommand(message, sender)
         if self.roster[sender].joinedAfterStart then return self:_reject(sender, id, "late_joiner") end
         if message.role ~= "contestant" and message.role ~= "spectator" then return self:_reject(sender, id, "invalid_role") end
     end
+    local preparation
+    if action == "START" then
+        local theme = self.callbacks.chooseTheme and self.callbacks.chooseTheme()
+        local startedAt = self.api.serverNow and integer(self.api.serverNow(), 1)
+        if not validTheme(theme) or not startedAt then return self:_reject(sender, id, "preparation_unavailable") end
+        preparation = {theme=theme, endsAt=startedAt + Network.PREPARATION_SECONDS}
+    end
     local ok, reason = true, nil
     if not self.callbacks.onCommand then return self:_reject(sender, id, "unsupported_command") end
     ok, reason = self.callbacks.onCommand(action, sender, copy(message))
@@ -414,7 +446,7 @@ function Network:_handleCommand(message, sender)
         self.roster[sender].role = message.role
         self.roster[sender].presence = "addon_ready"
     elseif action == "START" then
-        self.phase = "preparation"
+        self.phase, self.preparation = "preparation", preparation
     end
     self.version = self.version + 1
     self:_remember(replayKey, {ok=true, version=self.version})
@@ -436,8 +468,19 @@ function Network:Receive(prefix, wire, channel, sender)
     if not message then return self:_reject(sender, nil, reason) end
     local valid, validationReason = validateFields(message)
     if not valid then return self:_reject(sender, message.type == "CMD" and message.command_id or nil, validationReason) end
-    if message.type ~= "HELLO" and channel ~= "WHISPER" then
+    local raidPrepUpdate = channel == "RAID" and message.type == "STATE" and message.phase == "preparation"
+    if message.type ~= "HELLO" and channel ~= "WHISPER" and not raidPrepUpdate then
         return self:_reject(sender, message.type == "CMD" and message.command_id or nil, "wrong_channel")
+    end
+    local preparation
+    if message.prep_ends then
+        local endsAt = integer(message.prep_ends, 1)
+        local serverTime = self.api.serverNow and self.api.serverNow()
+        -- Tolerate modest server-clock skew, but not a countdown of arbitrary length.
+        if not serverTime or endsAt > serverTime + Network.PREPARATION_SECONDS + 5 then
+            return self:_reject(sender, nil, "malformed_payload")
+        end
+        preparation = {theme=message.theme, endsAt=endsAt}
     end
     if message.type == "HELLO" then
         if sender == self.api.playerName() then return true end
@@ -446,9 +489,11 @@ function Network:Receive(prefix, wire, channel, sender)
         if self:IsAuthority() and self.sessionId then
             return self:Send({ type="WELCOME", session_id=self.sessionId, version=self.version,
                 phase=self.phase, leader_guid=self.roster[self.leader].guid, role=member.role,
-                late=member.joinedAfterStart and 1 or nil }, "WHISPER", sender)
+                late=member.joinedAfterStart and 1 or nil,
+                theme=self.preparation and self.preparation.theme,
+                prep_ends=self.preparation and self.preparation.endsAt }, "WHISPER", sender)
         elseif sender == self.leader then
-            return self:Send({ type="HELLO", capability="raid-comms-v1" }, "WHISPER", self.leader)
+            return self:Send({ type="HELLO", capability=Network.CAPABILITY }, "WHISPER", self.leader)
         end
         return true
     elseif message.type == "WELCOME" then
@@ -465,7 +510,7 @@ function Network:Receive(prefix, wire, channel, sender)
         end
         if self.sessionId and version < self.version then return self:_reject(sender, nil, "stale_version") end
         self.sessionId, self.version, self.phase = message.session_id, version, message.phase
-        self.originalLeader = sender
+        self.preparation, self.originalLeader = preparation, sender
         local me = self.roster[self.api.playerName()]
         if me then
             me.role = message.role
@@ -504,10 +549,13 @@ function Network:Receive(prefix, wire, channel, sender)
         self:_emit("request_result", { commandId=message.command_id, status=pending.status, reason=pending.reason })
         return message.type == "ACK", message.reason
     elseif message.type == "STATE" then
-        if sender ~= self.leader or message.session_id ~= self.sessionId then return self:_reject(sender, nil, "unauthorized_sender") end
+        if sender ~= self.leader or sender ~= self.originalLeader or message.session_id ~= self.sessionId then
+            return self:_reject(sender, nil, "unauthorized_sender")
+        end
+        if sender == self.api.playerName() then return true end
         local version = integer(message.version, 0)
         if not version or version <= self.version or not validPhases[message.phase] then return self:_reject(sender, nil, "stale_version") end
-        self.version, self.phase = version, message.phase
+        self.version, self.phase, self.preparation = version, message.phase, preparation
         self:_emit("state_confirmed", self:GetProjection())
         return true
     elseif message.type == "PING" then
@@ -571,5 +619,5 @@ function Network:GetProjection()
         isLeader=self:IsAuthority() == true, presence=counts, contestants=contestants, spectators=spectators,
         pendingResponses=counts.addon_pending + missingResponses,
         discoveryComplete=discoveryComplete, members=members, localRole=localMember and localMember.role, lobbyState=lobby,
-        lastRejected=self.lastRejected }
+        preparation=self.preparation and copy(self.preparation), lastRejected=self.lastRejected }
 end

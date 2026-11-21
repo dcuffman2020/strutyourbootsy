@@ -8,6 +8,7 @@ local primary, secondary, contestant, spectator, confirmPassive
 local context = {}
 local rows = {}
 local selectedRole, selectedObserver, sessionId
+local prepDeadline, prepSeconds, prepTick = nil, nil, 0
 local gold = {0.88, 0.71, 0.42}
 local pale = {0.92, 0.94, 0.96}
 local muted = {0.62, 0.68, 0.74}
@@ -32,6 +33,7 @@ local messages = {
     wrong_phase="Registration is closed.",
     minimum_five_contestants="Register at least five connected contestants.",
     registration_pending="Wait for pending addon users to confirm their roles.",
+    preparation_unavailable="Could not start preparation. Try Start again.",
     invalid_runway_order="Roster and registrations differ. Check the roster or reopen registration.",
     already_registered="The leader already registered your role. Refresh to confirm it.",
     session_active="A raid session is already active.",
@@ -69,6 +71,18 @@ local function panel(y, height)
     return control
 end
 
+local function refreshPreparationClock()
+    if not prepDeadline then return end
+    local remaining = math.min(context.preparationSeconds, math.max(0, prepDeadline - context.serverNow()))
+    if remaining == prepSeconds then return end
+    prepSeconds = remaining
+    if remaining > 0 then
+        status:SetText(("Time to prepare: %d:%02d"):format(math.floor(remaining / 60), remaining % 60))
+    else
+        status:SetText("Preparation complete. This alpha ends here.")
+    end
+end
+
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
     window:SetSize(465, 537)
@@ -86,6 +100,13 @@ local function build()
     window:SetScript("OnDragStart", window.StartMoving)
     window:SetScript("OnDragStop", window.StopMovingOrSizing)
     window:SetScript("OnHide", window.StopMovingOrSizing)
+    window:SetScript("OnUpdate", function(_, elapsed)
+        if not prepDeadline or prepSeconds == 0 then return end
+        prepTick = prepTick + elapsed
+        if prepTick < 0.25 then return end
+        prepTick = 0
+        refreshPreparationClock()
+    end)
 
     label(window, "STRUT YOUR BOOTSY", 14, 28, -25, gold)
     title = label(window, "Welcome to the runway", 24, 28, -56)
@@ -178,6 +199,7 @@ function UI.Refresh()
     local lobby = registration and p.isLeader
     local chooser = registration and not p.isLeader and p.lobbyState ~= "late_joiner" and p.lobbyState ~= "disconnected"
     local prompt
+    prepDeadline, prepSeconds, prepTick = nil, nil, 0
     primary:SetShown(true)
     list:SetShown(lobby == true)
     contestant:SetShown(chooser == true)
@@ -225,13 +247,14 @@ function UI.Refresh()
             elseif p.localRole == "spectator" then role = "Spectator" end
         end
         summary:SetText("Registration is closed.\nYour role: " .. role)
-        details:SetText("What happens next")
+        details:SetText(p.preparation and ("Theme: " .. p.preparation.theme) or "Waiting for the theme…")
         roleHint:SetText(role == "Contestant" and "Get your outfit ready."
             or role == "Administrator" and "Give contestants time to get their outfits ready."
             or "Contestants are getting their outfits ready.")
         primary:SetShown(false)
         primary:SetEnabled(false)
-        prompt = "This alpha ends at Preparation."
+        prepDeadline = p.preparation and p.preparation.endsAt
+        prompt = prepDeadline and "" or "Syncing the countdown with the raid leader…"
     else
         title:SetText("Welcome to the runway")
         summary:SetText((IsInRaid() and "In raid" or "Not in a raid. Join a raid to participate.") ..
@@ -246,6 +269,7 @@ function UI.Refresh()
     local noticeText = p.notice and (messages[p.notice] or ("Action failed (" .. p.notice .. "). Refresh and try again."))
     actionNotice:SetText(noticeText and noticeText ~= prompt and noticeText or "")
     status:SetText(prompt)
+    refreshPreparationClock()
 end
 
 function UI.Toggle()

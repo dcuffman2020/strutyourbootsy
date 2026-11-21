@@ -5,6 +5,12 @@ local state, developmentState, network
 local roleRequest, notice
 local sequence = 0
 local lastSession = 0
+-- Small one-round alpha pool; the full catalog and custom theme setup come later.
+local alphaThemes = {"Royalty", "Out of This World", "Back from the Dead", "Heroes of Azeroth"}
+
+local function chooseAlphaTheme()
+    return alphaThemes[1 + math.floor(math.random() * #alphaThemes)]
+end
 
 local function say(message)
     DEFAULT_CHAT_FRAME:AddMessage("|cffffd36aStrut Your Bootsy:|r " .. message)
@@ -72,7 +78,7 @@ end
 local function setupNetwork()
     if network then return true end
     local candidate = Network.New({
-        now=GetTime, playerName=playerName, localRealm=localRealm, getRoster=raidRoster,
+        now=GetTime, serverNow=GetServerTime, playerName=playerName, localRealm=localRealm, getRoster=raidRoster,
         newerSession=function(nextId, oldId)
             return tonumber(nextId) and tonumber(oldId) and tonumber(nextId) > tonumber(oldId)
         end,
@@ -84,7 +90,7 @@ local function setupNetwork()
             local ok, result = pcall(C_ChatInfo.SendAddonMessage, prefix, message, channel, target)
             return ok and result == Enum.SendAddonMessageResult.Success
         end,
-    }, { onEvent=onNetworkEvent, onCommand=onNetworkCommand })
+    }, { onEvent=onNetworkEvent, onCommand=onNetworkCommand, chooseTheme=chooseAlphaTheme })
     local ok, reason = candidate:Register()
     if not ok then say("Raid communications unavailable: " .. reason); return false end
     network = candidate
@@ -172,6 +178,18 @@ local function run(action, ...)
     return ok, reason
 end
 
+local function startContest()
+    local ok, reason = network:StartContest(commandId())
+    if not ok then return false, reason end
+    local id = network.sessionId
+    if not network:BroadcastPreparation() then
+        C_Timer.After(Network.SEND_WINDOW + 0.25, function()
+            if network.sessionId == id then network:BroadcastPreparation() end
+        end)
+    end
+    return true
+end
+
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -180,8 +198,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
         setupNetwork()
         UI.Initialize({
             getProjection=view, refresh=refresh, preferences=SYBCharacterDB.preferences,
+            serverNow=GetServerTime, preparationSeconds=Network.PREPARATION_SECONDS,
             openRegistration=function() run(openRegistration) end,
-            start=function() run(function() return network:StartContest(commandId()) end) end,
+            start=function() run(startContest) end,
             cancel=function() run(function() return network:CancelRegistration() end) end,
             submitRole=function(role) run(submitRole, role) end,
             confirmPassive=function(name, guid)

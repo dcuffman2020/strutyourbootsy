@@ -15,6 +15,7 @@ local function client(name)
     local sent, events = {}, {}
     local instance = Network.New({
         now=function() return now end,
+        serverNow=function() return 1700000000 + now end,
         playerName=function() return name end,
         getRoster=function() return roster end,
         registerPrefix=function(prefix) return prefix == Network.PREFIX end,
@@ -52,10 +53,14 @@ assert(member.sessionId == "session-1" and member.version == 1 and member.phase 
 assert(leader.roster["Member-Realm"].presence == "addon_pending")
 local huge, hugeReason = Network.Encode({type="HELLO", capability=string.rep("x", 255)})
 assert(huge == nil and hugeReason == "oversized_payload")
-local decoded, malformedReason = Network.Decode("t=CMD|s=1|broken")
+local decoded, malformedReason = Network.Decode("t=CMD|s=2|broken")
 assert(decoded == nil and malformedReason == "malformed_payload")
-local unknown, unknownReason = Network.Decode("t=EVIL|s=1")
+local unknown, unknownReason = Network.Decode("t=EVIL|s=2")
 assert(unknown == nil and unknownReason == "unknown_command")
+
+local old, oldReason = Network.Decode("t=HELLO|s=1|capability=raid-comms-v1")
+assert(not old and oldReason == "unsupported_client")
+assert(not leaderSent[#leaderSent].message:find("theme=", 1, true))
 
 -- Transport identity comes from sender metadata and must exist in the live roster.
 assert(member:Request("ROLE", "role-1", {role="contestant"}))
@@ -101,6 +106,31 @@ local arbitrary = assert(Network.Encode({type="ACK", session_id="session-1", com
 member.pending["bad-version"] = {message={expected_version=3}, status="pending", attempts=1}
 local arbitraryOK, arbitraryReason = member:Receive(Network.PREFIX, arbitrary, "WHISPER", "Leader-Realm")
 assert(not arbitraryOK and arbitraryReason == "invalid_result_version" and member.version == 3)
+
+-- A preparation update is a leader-only, current-session reveal. Check that
+-- invalid data does not mutate the registered client's view.
+local function reveal(overrides, sender)
+    local msg = {type="STATE", session_id="session-1", version=4,
+        phase="preparation", theme="Royalty", prep_ends=1700000220}
+    for k, v in pairs(overrides or {}) do msg[k] = v end
+    return member:Receive(Network.PREFIX, assert(Network.Encode(msg)), "RAID", sender or "Leader-Realm")
+end
+local ok, reason = reveal({}, "Quiet-Realm")
+assert(not ok and reason == "unauthorized_sender")
+ok, reason = reveal({session_id="old-session"})
+assert(not ok and reason == "unauthorized_sender")
+ok, reason = reveal({phase="registration"})
+assert(not ok and reason == "malformed_payload")
+ok, reason = reveal({theme="|Tnot-markup|t"})
+assert(not ok and reason == "malformed_payload")
+ok, reason = reveal({prep_ends=1700000900})
+assert(not ok and reason == "malformed_payload")
+assert(member.phase == "registration" and member.version == 3 and not member:GetProjection().preparation)
+assert(reveal())
+assert(member.phase == "preparation" and member:GetProjection().preparation.theme == "Royalty")
+assert(member:GetProjection().preparation.endsAt == 1700000220)
+assert(not reveal({theme="Different"}))
+assert(member:GetProjection().preparation.theme == "Royalty")
 
 -- Canonical names cover same-realm, cross-realm, and connected-realm forms.
 assert(Network.NormalizeName("Same", "Realm One") == "Same-RealmOne")
