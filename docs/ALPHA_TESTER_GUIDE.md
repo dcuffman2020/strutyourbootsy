@@ -4,8 +4,8 @@ This is a private test build, not a playable contest. It verifies lobby readines
 
 ## Install
 
-1. Fully exit WoW Retail. Extract the ZIP and copy the one `StrutYourBootsy` folder into `_retail_/Interface/AddOns/`. The manifest must be at `_retail_/Interface/AddOns/StrutYourBootsy/StrutYourBootsy.toc`, without a second nested addon folder.
-2. Enable Strut Your Bootsy on the character screen. In game, use `/syb` to open the window. `/syb status` prints diagnostics. No account credentials or additional installer are needed.
+1. Fully exit WoW Retail. Extract the ZIP and copy the one `StrutYourBootsy` folder into `_retail_/Interface/AddOns/`. Keep the included `Assets/BootsyMinimap.tga` file in the addon folder. The manifest must be at `_retail_/Interface/AddOns/StrutYourBootsy/StrutYourBootsy.toc`, without a second nested addon folder.
+2. Enable Strut Your Bootsy on the character screen. In game, use `/syb` to open the window. `/syb status` prints diagnostics. The Bootsy head icon opens the same window; drag it to reposition. No account credentials or additional installer are needed.
 
 ## At the next scheduled raid test
 

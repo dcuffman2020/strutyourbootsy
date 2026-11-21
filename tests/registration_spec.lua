@@ -11,6 +11,7 @@ local methods = {}
 local widgets = {__index=function(_, key)
     return methods[key] or function() end
 end}
+function methods:SetNormalTexture(path) self.normalTexture = path end
 function methods:SetScript(event, fn) self.scripts[event] = fn end
 function methods:RegisterEvent(event) self.events[event] = true end
 function methods:SetText(value) self.text = value end
@@ -158,6 +159,14 @@ solo.event("PLAYER_LOGIN")
 assert(not solo.frames[1].events.CHAT_MSG_ADDON)
 assert(solo.env.SLASH_STRUTYOURBOOTSY1 == "/syb")
 assert(solo.env.SYBMinimapLauncher.parent == solo.env.Minimap)
+assert(solo.env.SYBMinimapLauncher.normalTexture == "Interface\\AddOns\\StrutYourBootsy\\Assets\\BootsyMinimap.tga")
+local icon = assert(io.open("Assets/BootsyMinimap.tga", "rb"))
+local bytes = icon:read("*a")
+icon:close()
+assert(#bytes == 18 + 64 * 64 * 4 and bytes:byte(3) == 2)
+assert(bytes:byte(13) == 64 and bytes:byte(15) == 64 and bytes:byte(17) == 32 and bytes:byte(18) == 8)
+assert(bytes:byte(22) == 0 and bytes:byte(22 + (64 * 32 + 32) * 4) > 245)
+
 solo.slash("")
 local window = solo.env.SYBAdminWindow
 assert(window:IsShown() and solo.env.UISpecialFrames[1] == "SYBAdminWindow")
