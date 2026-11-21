@@ -53,12 +53,12 @@ assert(member.sessionId == "session-1" and member.version == 1 and member.phase 
 assert(leader.roster["Member-Realm"].presence == "addon_pending")
 local huge, hugeReason = Network.Encode({type="HELLO", capability=string.rep("x", 255)})
 assert(huge == nil and hugeReason == "oversized_payload")
-local decoded, malformedReason = Network.Decode("t=CMD|s=2|broken")
+local decoded, malformedReason = Network.Decode("t=CMD|s=3|broken")
 assert(decoded == nil and malformedReason == "malformed_payload")
-local unknown, unknownReason = Network.Decode("t=EVIL|s=2")
+local unknown, unknownReason = Network.Decode("t=EVIL|s=3")
 assert(unknown == nil and unknownReason == "unknown_command")
 
-local old, oldReason = Network.Decode("t=HELLO|s=1|capability=raid-comms-v1")
+local old, oldReason = Network.Decode("t=HELLO|s=2|capability=raid-comms-v2")
 assert(not old and oldReason == "unsupported_client")
 assert(not leaderSent[#leaderSent].message:find("theme=", 1, true))
 
@@ -131,6 +131,21 @@ assert(member.phase == "preparation" and member:GetProjection().preparation.them
 assert(member:GetProjection().preparation.endsAt == 1700000220)
 assert(not reveal({theme="Different"}))
 assert(member:GetProjection().preparation.theme == "Royalty")
+local function runway(overrides, sender)
+    local msg = {type="STATE",session_id="session-1",version=5,phase="runway",
+        pos=1,total=5,cur="Player-2",nxt="Player-3"}
+    for k,v in pairs(overrides or {}) do msg[k]=v end
+    return member:Receive(Network.PREFIX,assert(Network.Encode(msg)),"RAID",sender or "Leader-Realm")
+end
+assert(not runway({},"Quiet-Realm"))
+assert(not runway({pos=6}))
+assert(not runway({nxt="Player-2"}))
+assert(not runway({phase="runway_complete"}))
+assert(runway())
+assert(member:GetProjection().runway.current=="Member-Realm")
+assert(not runway({pos=2}))
+assert(member:GetProjection().runway.index==1)
+
 
 -- Canonical names cover same-realm, cross-realm, and connected-realm forms.
 assert(Network.NormalizeName("Same", "Realm One") == "Same-RealmOne")

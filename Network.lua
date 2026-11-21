@@ -8,8 +8,8 @@ Network.__index = Network
 ns.Network = Network
 
 Network.PREFIX = "SYBDEV02"
-Network.SCHEMA = 2
-Network.CAPABILITY = "raid-comms-v2"
+Network.SCHEMA = 3
+Network.CAPABILITY = "raid-comms-v3"
 Network.PREPARATION_SECONDS = 120
 Network.MAX_BYTES = 255
 Network.DISCOVERY_SECONDS = 10
@@ -18,7 +18,7 @@ Network.SEND_BURST = 8
 Network.SEND_WINDOW = 5
 
 local knownTypes = { HELLO=true, WELCOME=true, STATE=true, CMD=true, ACK=true, REJECT=true, PING=true }
-local adminActions = { START=true, PAUSE=true, RESUME=true, ADVANCE=true, END=true }
+local adminActions = { START=true, BEGIN_RUNWAY=true, PAUSE=true, RESUME=true, ADVANCE=true, END=true }
 local rejectReasons = {
     admin_cannot_participate=true, already_registered=true, disconnected=true,
     duplicate_result=true, identity_mismatch=true, invalid_ack=true,
@@ -31,9 +31,9 @@ local rejectReasons = {
     unsupported_client=true, wrong_channel=true, wrong_phase=true,
     late_joiner=true, pending_addon_users=true, insufficient_contestants=true, discovery_pending=true,
     registration_closed=true, minimum_five_contestants=true, registration_pending=true,
-    invalid_runway_order=true, preparation_unavailable=true,
+    invalid_runway_order=true, preparation_unavailable=true, preparation_running=true,
 }
-local validPhases = { registration=true, preparation=true, runway=true, voting=true,
+local validPhases = { registration=true, preparation=true, runway=true, runway_complete=true, voting=true,
     round_results=true, final_results=true, paused=true, ended=true }
 
 local function copy(source)
@@ -110,8 +110,8 @@ end
 
 local allowedFields = {
     HELLO={capability=true}, PING={session_id=true, version=true},
-    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true},
-    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true},
+    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true},
+    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true},
     CMD={session_id=true, command_id=true, expected_version=true, action=true, role=true},
     ACK={session_id=true, command_id=true, version=true, reason=true},
     REJECT={session_id=true, command_id=true, version=true, reason=true},
@@ -120,6 +120,10 @@ local allowedFields = {
 local function validTheme(value)
     -- Alpha theme names are bounded plain text, not WoW markup.
     return type(value) == "string" and #value <= 48 and value:match("^[%a][%w ,'-]*$") ~= nil
+end
+
+local function validGuid(x)
+    return type(x) == "string" and #x <= 32 and x:match("^[%w%-]+$") ~= nil
 end
 
 local function validateFields(message)
@@ -143,6 +147,19 @@ local function validateFields(message)
                 return false, "malformed_payload"
             end
         elseif message.theme or message.prep_ends then
+            return false, "malformed_payload"
+        end
+        local runway = message.phase == "runway" or message.phase == "runway_complete"
+        if runway then
+            local pos, total = integer(message.pos,1), integer(message.total,5)
+            if not pos or not total or total > 39 or pos > total then return false, "malformed_payload" end
+            if message.phase == "runway" then
+                if not validGuid(message.cur) or (pos < total and not validGuid(message.nxt)) or
+                   (pos == total and message.nxt) or message.cur == message.nxt then
+                    return false, "malformed_payload"
+                end
+            elseif pos ~= total or message.cur or message.nxt then return false, "malformed_payload" end
+        elseif message.pos or message.total or message.cur or message.nxt then
             return false, "malformed_payload"
         end
     end
@@ -278,23 +295,33 @@ function Network:IsAuthority()
     return member and member.connected and self.api.playerName() == self.leader
 end
 
-function Network:StartContest(commandId)
+function Network:AdminCommand(action, commandId)
     self:RefreshRoster()
     if not self:IsAuthority() then return false, "not_raid_leader" end
     if not self.sessionId or self.originalLeader ~= self.leader then return false, "no_session" end
     return self:_handleCommand({
-        action="START", command_id=commandId, session_id=self.sessionId,
+        action=action, command_id=commandId, session_id=self.sessionId,
         expected_version=self.version,
     }, self.leader)
 end
 
+function Network:StartContest(commandId)
+    return self:AdminCommand("START", commandId)
+end
+
+local function stateFields(self, msg)
+    local prep, r = self.preparation, self.runway
+    msg.theme, msg.prep_ends = prep and prep.theme, prep and prep.endsAt
+    if r then msg.pos, msg.total, msg.cur, msg.nxt = r.index, r.total, r.current, r.upcoming end
+    return msg
+end
+
 -- A single leader-authored raid update avoids a per-client reveal burst.
 -- Poll/WELCOME provides eventual recovery if this packet is missed.
-function Network:BroadcastPreparation()
+function Network:BroadcastContest()
     if not self:IsAuthority() or self.originalLeader ~= self.leader then return false, "not_authority" end
-    if self.phase ~= "preparation" or not self.preparation then return false, "wrong_phase" end
-    return self:Send({type="STATE", session_id=self.sessionId, version=self.version, phase=self.phase,
-        theme=self.preparation.theme, prep_ends=self.preparation.endsAt}, "RAID")
+    if not self.preparation and not self.runway then return false, "wrong_phase" end
+    return self:Send(stateFields(self,{type="STATE", session_id=self.sessionId, version=self.version, phase=self.phase}), "RAID")
 end
 
 function Network:Poll()
@@ -311,7 +338,7 @@ function Network:StartSession(sessionId)
     if type(sessionId) ~= "string" or sessionId == "" or #sessionId > 40 then return false, "invalid_session" end
     self.sessionId, self.version, self.phase = sessionId, 1, "registration"
     self.originalLeader = self.leader
-    self.discoveryStarted, self.lastRejected, self.preparation = nil, nil, nil
+    self.discoveryStarted, self.lastRejected, self.preparation, self.runway, self.contestantGuids = nil, nil, nil, nil, nil
     self.absent = {}
     for name, member in pairs(self.roster) do
         member.role, member.joinedAfterStart = nil, false
@@ -331,7 +358,7 @@ end
 
 function Network:EndSession(reason)
     if not self.sessionId then return false, "no_session" end
-    self.phase, self.preparation = "ended", nil
+    self.phase, self.preparation, self.runway, self.contestantGuids = "ended", nil, nil, nil
     self.version = self.version + 1
     self:_emit("session_ended", { reason=reason, sessionId=self.sessionId, version=self.version })
     return true
@@ -418,6 +445,13 @@ function Network:_handleCommand(message, sender)
         local readiness = self:GetProjection().lobbyState
         if readiness ~= "ready_to_start" then return self:_reject(sender, id, readiness) end
     end
+    if action == "BEGIN_RUNWAY" or action == "ADVANCE" then
+        if action == "BEGIN_RUNWAY" then
+            if self.phase ~= "preparation" or not self.preparation then return self:_reject(sender,id,"wrong_phase") end
+            if self.api.serverNow() < self.preparation.endsAt then return self:_reject(sender,id,"preparation_running") end
+        end
+        if self:RunwayBlocked() then return self:_reject(sender,id,"disconnected") end
+    end
     if (action == "PAUSE" and (self.phase == "paused" or self.phase == "ended")) or
        (action == "RESUME" and self.phase ~= "paused") or (action == "ADVANCE" and self.phase ~= "runway") then
         return self:_reject(sender, id, "wrong_phase")
@@ -428,16 +462,23 @@ function Network:_handleCommand(message, sender)
         if self.roster[sender].joinedAfterStart then return self:_reject(sender, id, "late_joiner") end
         if message.role ~= "contestant" and message.role ~= "spectator" then return self:_reject(sender, id, "invalid_role") end
     end
-    local preparation
+    local preparation, frozen
     if action == "START" then
         local theme = self.callbacks.chooseTheme and self.callbacks.chooseTheme()
         local startedAt = self.api.serverNow and integer(self.api.serverNow(), 1)
         if not validTheme(theme) or not startedAt then return self:_reject(sender, id, "preparation_unavailable") end
         preparation = {theme=theme, endsAt=startedAt + Network.PREPARATION_SECONDS}
+        frozen = {}
+        for name, member in pairs(self.roster) do
+            if member.role == "contestant" then
+                if not validGuid(member.guid) then return self:_reject(sender,id,"invalid_runway_order") end
+                frozen[name] = member.guid
+            end
+        end
     end
-    local ok, reason = true, nil
+    local ok, reason, turn
     if not self.callbacks.onCommand then return self:_reject(sender, id, "unsupported_command") end
-    ok, reason = self.callbacks.onCommand(action, sender, copy(message))
+    ok, reason, turn = self.callbacks.onCommand(action, sender, copy(message))
     if not ok then
         self:_remember(replayKey, {ok=false, reason=reason or "rejected", version=self.version})
         return self:_reject(sender, id, reason or "rejected")
@@ -446,7 +487,11 @@ function Network:_handleCommand(message, sender)
         self.roster[sender].role = message.role
         self.roster[sender].presence = "addon_ready"
     elseif action == "START" then
-        self.phase, self.preparation = "preparation", preparation
+        self.phase, self.preparation, self.contestantGuids = "preparation", preparation, frozen
+    elseif action == "BEGIN_RUNWAY" or action == "ADVANCE" then
+        local function guid(name) return name and self.contestantGuids[name] or nil end
+        self.phase, self.preparation = turn.current and "runway" or "runway_complete", nil
+        self.runway = {index=turn.index,total=turn.total,current=guid(turn.current),upcoming=guid(turn.upcoming)}
     end
     self.version = self.version + 1
     self:_remember(replayKey, {ok=true, version=self.version})
@@ -468,11 +513,12 @@ function Network:Receive(prefix, wire, channel, sender)
     if not message then return self:_reject(sender, nil, reason) end
     local valid, validationReason = validateFields(message)
     if not valid then return self:_reject(sender, message.type == "CMD" and message.command_id or nil, validationReason) end
-    local raidPrepUpdate = channel == "RAID" and message.type == "STATE" and message.phase == "preparation"
+    local raidPrepUpdate = channel == "RAID" and message.type == "STATE" and (message.phase == "preparation" or message.phase == "runway" or message.phase == "runway_complete")
     if message.type ~= "HELLO" and channel ~= "WHISPER" and not raidPrepUpdate then
         return self:_reject(sender, message.type == "CMD" and message.command_id or nil, "wrong_channel")
     end
-    local preparation
+    local preparation, runway
+    if message.pos then runway = {index=tonumber(message.pos),total=tonumber(message.total),current=message.cur,upcoming=message.nxt} end
     if message.prep_ends then
         local endsAt = integer(message.prep_ends, 1)
         local serverTime = self.api.serverNow and self.api.serverNow()
@@ -487,11 +533,9 @@ function Network:Receive(prefix, wire, channel, sender)
         member.presence = member.role and "addon_ready" or "addon_pending"
         self:_emit("addon_detected", { name=sender, guid=member.guid })
         if self:IsAuthority() and self.sessionId then
-            return self:Send({ type="WELCOME", session_id=self.sessionId, version=self.version,
+            return self:Send(stateFields(self,{ type="WELCOME", session_id=self.sessionId, version=self.version,
                 phase=self.phase, leader_guid=self.roster[self.leader].guid, role=member.role,
-                late=member.joinedAfterStart and 1 or nil,
-                theme=self.preparation and self.preparation.theme,
-                prep_ends=self.preparation and self.preparation.endsAt }, "WHISPER", sender)
+                late=member.joinedAfterStart and 1 or nil }), "WHISPER", sender)
         elseif sender == self.leader then
             return self:Send({ type="HELLO", capability=Network.CAPABILITY }, "WHISPER", self.leader)
         end
@@ -510,7 +554,7 @@ function Network:Receive(prefix, wire, channel, sender)
         end
         if self.sessionId and version < self.version then return self:_reject(sender, nil, "stale_version") end
         self.sessionId, self.version, self.phase = message.session_id, version, message.phase
-        self.preparation, self.originalLeader = preparation, sender
+        self.preparation, self.runway, self.originalLeader = preparation, runway, sender
         local me = self.roster[self.api.playerName()]
         if me then
             me.role = message.role
@@ -555,7 +599,7 @@ function Network:Receive(prefix, wire, channel, sender)
         if sender == self.api.playerName() then return true end
         local version = integer(message.version, 0)
         if not version or version <= self.version or not validPhases[message.phase] then return self:_reject(sender, nil, "stale_version") end
-        self.version, self.phase, self.preparation = version, message.phase, preparation
+        self.version, self.phase, self.preparation, self.runway = version, message.phase, preparation, runway
         self:_emit("state_confirmed", self:GetProjection())
         return true
     elseif message.type == "PING" then
@@ -566,6 +610,14 @@ function Network:Receive(prefix, wire, channel, sender)
         return true
     end
     return self:_reject(sender, nil, "unknown_command")
+end
+
+function Network:RunwayBlocked()
+    for name, guid in pairs(self.contestantGuids or {}) do
+        local m = self.roster[name]
+        if not m or m.guid ~= guid or not m.connected then return true end
+    end
+    return false
 end
 
 function Network:GetProjection()
@@ -615,9 +667,18 @@ function Network:GetProjection()
     elseif not discoveryComplete then
         lobby = "discovery_pending"
     else lobby = "ready_to_start" end
+    local r
+    if self.runway then
+        local function name(guid)
+            if not guid then return nil end
+            for _, member in ipairs(members) do if member.guid == guid then return member.name end end
+            return "Contestant unavailable"
+        end
+        r = {index=self.runway.index,total=self.runway.total,current=name(self.runway.current),upcoming=name(self.runway.upcoming)}
+    end
     return { sessionId=self.sessionId, version=self.version, phase=self.phase, leader=self.leader,
         isLeader=self:IsAuthority() == true, presence=counts, contestants=contestants, spectators=spectators,
         pendingResponses=counts.addon_pending + missingResponses,
         discoveryComplete=discoveryComplete, members=members, localRole=localMember and localMember.role, lobbyState=lobby,
-        preparation=self.preparation and copy(self.preparation), lastRejected=self.lastRejected }
+        preparation=self.preparation and copy(self.preparation), runway=r, runwayBlocked=self:RunwayBlocked(), lastRejected=self.lastRejected }
 end

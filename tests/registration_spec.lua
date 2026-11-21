@@ -316,14 +316,82 @@ for i, member in ipairs(group) do
     assertLabel(member, "Theme: Royalty")
     assertLabel(member, "Time to prepare: 1:36")
     assert(not member.click("Start contest"))
+    assert(not member.click("Begin runway"))
+    assert(not member.click("Skip countdown"))
     assert(not member.click("Confirm role"))
 end
 advance(finishingAt - leader.env.GetServerTime() - 1)
 for _, member in ipairs(group) do assertLabel(member, "Time to prepare: 0:01") end
+-- At expiry only the raid leader may enter the runway. An unavailable
+-- contestant holds the transition instead of silently losing their turn.
+roster[4].online = false
+leader.event("GROUP_ROSTER_UPDATE")
 advance(1)
-advance(8)
-for _, member in ipairs(group) do
-    assertLabel(member, "Preparation complete. This alpha ends here.")
-    assert(not member.click("Begin runway"))
+assert(not leader.click("Begin runway"))
+assertLabel(leader, "A contestant is unavailable. Wait for them to return.")
+roster[4].online = true
+leader.event("GROUP_ROSTER_UPDATE")
+for i=2,6 do assert(not group[i].click("Begin runway")) end
+group[6].missReveal = false
+assert(leader.click("Begin runway")); deliver()
+local order = {"Player3-Realm","Player4-Realm","Player5-Realm","Player6-Realm","Player2-Realm"}
+for j,name in ipairs(order) do
+    if j > 1 then advance(6) end
+    local upNext = order[j+1] and "Up next: " .. order[j+1] or "Final presentation"
+    for i,member in ipairs(group) do
+        assertLabel(member, "Round 1 of 1: Runway")
+        assertLabel(member, ("Presenting  %d of 5\n%s\n%s"):format(j,name,upNext))
+        if i>1 then assert(not member.click("Next contestant") and not member.click("Finish runway")) end
+    end
+    if j==1 then
+        roster[3].online=false; leader.event("GROUP_ROSTER_UPDATE")
+        assert(not leader.click("Next contestant"))
+        roster[3].online=true; leader.event("GROUP_ROSTER_UPDATE")
+        group[6].missReveal=true -- miss this turn update; recover via refresh below.
+    end
+    assert(leader.click(j==5 and "Finish runway" or "Next contestant")); deliver()
+    if j==1 then
+        assertLabel(group[6], "Presenting  1 of 5\nPlayer3-Realm\nUp next: Player4-Realm")
+        group[6].missReveal=false
+        assert(group[6].click("Refresh")); deliver()
+    end
 end
-print("Registration, theme reveal and preparation countdown spec passed")
+for _,member in ipairs(group) do
+    assertLabel(member, "Runway complete")
+    assertLabel(member, "5 of 5 contestants presented.")
+    assert(not member.click("Next contestant") and not member.click("Begin voting"))
+end
+leader.slash("practice")
+assert(leader.chat[#leader.chat]:find("Leave your party or raid",1,true))
+
+-- Exercise the public solo launcher and five-step loop. No raid packets may leave.
+roster, clients, packets = {}, {}, {}
+local demo = makeClient()
+demo.event("PLAYER_LOGIN")
+demo.slash("practice")
+assertLabel(demo, "STRUT YOUR BOOTSY  ·  PRACTICE MODE")
+assertLabel(demo, "Five fictional contestants. No raid messages are sent.")
+assert(demo.click("Start contest"))
+assertLabel(demo, "Time to prepare: 2:00")
+assert(not demo.click("Begin runway"))
+assert(demo.click("Skip countdown") and demo.click("Begin runway"))
+for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cinderstep"}) do
+    assertLabel(demo, "Round 1 of 1: Runway")
+    local found=false
+    for _,f in ipairs(demo.frames) do if rawget(f,"text")==name .. "  ·  Presenting" and f.shown then found=true end end
+    assert(found,"Missing exact solo presenter: " .. name)
+    assert(demo.click(j==5 and "Finish runway" or "Next contestant"))
+end
+assertLabel(demo, "Runway complete")
+assert(demo.click("Practice again"))
+assertLabel(demo, "Registration lobby")
+demo.slash("devnetstart")
+assert(demo.chat[#demo.chat]:find("Exit solo practice",1,true))
+assert(demo.click("Exit practice"))
+assertLabel(demo, "Welcome to the runway")
+assert(#packets==0,"Solo practice must not send addon messages")
+demo.slash("practice")
+demo.inRaid=true; demo.event("GROUP_ROSTER_UPDATE")
+assertLabel(demo, "Welcome to the runway")
+assert(#packets==0)
+print("Registration, timed preparation, synchronized runway, and solo practice specs passed")

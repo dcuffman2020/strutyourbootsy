@@ -1,17 +1,21 @@
-# Strut Your Bootsy | Theme and preparation checkpoint
+# Strut Your Bootsy | Runway and solo practice alpha
 
-This is a private test build, not a playable contest. It verifies lobby readiness, theme reveal, and the two-minute countdown for one round. The full theme catalog, setup wizard, runway, and voting are not included.
+This is a private, one-round test build. It includes registration, a shared theme, a two-minute preparation timer, and the manually advanced runway. It ends before voting. Full setup, voting, and recovery are not available yet.
 
 ## Install
 
-1. Fully exit WoW Retail. Extract the ZIP and copy the one `StrutYourBootsy` folder into `_retail_/Interface/AddOns/`. Keep the included `Assets/BootsyMinimap.tga` file in the addon folder. The manifest must be at `_retail_/Interface/AddOns/StrutYourBootsy/StrutYourBootsy.toc`, without a second nested addon folder.
-2. Enable Strut Your Bootsy on the character screen. In game, use `/syb` to open the window. `/syb status` prints diagnostics. The Bootsy head icon opens the same window; drag it to reposition. No account credentials or additional installer are needed.
+1. Fully exit WoW Retail. Extract the ZIP and copy the single `StrutYourBootsy` folder to `_retail_/Interface/AddOns/`. Keep its included `Assets/BootsyMinimap.tga`. Do not put the addon inside a second nested `StrutYourBootsy` directory.
+2. Enable the addon at character select. Use the Bootsy minimap button or type `/syb`. The minimap button drags to a new position.
 
-## At the next scheduled raid test
+## Test solo (no group needed)
 
-1. Install this same build on all six players. The earlier registration build cannot join this version. Use one raid leader and five contestants. The leader opens registration from `/syb`. Each of the other five selects and confirms **Contestant**. Let discovery finish.
-2. When **Start contest** enables, click it once. All six should see **Round 1 of 1: Preparation**, the same theme, and a countdown to the same end time. The theme should not be visible before Start. Most clients should update immediately; if a client misses the initial reveal, use **Refresh** and confirm its timer joins the others, not a fresh two minutes.
-3. Let the timer expire. All clients should see **Preparation complete**. No runway starts in this build.
-4. If Start stays disabled, capture the readiness text above it and the `lobby:` value from `/syb status` before closing the lobby. No need to organize a separate raid for this checkpoint.
+1. While outside a party or raid, type **`/syb practice`**. The window is marked **Practice mode**, with five fictional contestants ready in the lobby.
+2. Click **Start contest**. Confirm the theme and timer appear. Wait for expiry to test the actual clock, or use the practice-only **Skip countdown**.
+3. Click **Begin runway**. Verify that all five names are visible and that **Presenting** and **Up next** update. Use **Next contestant** for the first four turns, then **Finish runway**.
+4. On **Runway complete**, use **Practice again** to reset or **Exit practice** (also `/syb practice stop`) to return to normal. Practice is local, sends no raid traffic, and exits when you join a group.
 
-If the addon does not load, check the folder nesting. If an error appears, share the error message only, not your SavedVariables or account details. This package declares Retail interface `120105`. Do not delete other addons or the `WTF` directory.
+## Next group test
+
+Use this same version on the raid leader and five confirmed contestants. It does not mix with earlier builds. Open registration, wait for discovery, confirm all five, and click **Start contest**. Everyone should see the same theme and finish time. At expiry only the leader can begin and advance. The leader sees the full order; participants see the current and next contestant. Verify one consistent progression across all clients through **Runway complete**. If a client misses an update, use **Refresh** to catch up. If Start is disabled, capture the reason or the `lobby:` value from `/syb status`.
+
+If a registered contestant disconnects, current alpha controls hold until they return. Full recovery is a separate milestone. If testing a second *live* contest, reload the group clients for a fresh test session. Do not send SavedVariables or account details with an error report.
