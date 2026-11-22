@@ -9,6 +9,15 @@ This is a private test build. Live raid play still ends at the runway. Solo prac
 
 Click the **?** bubble in the addon header for quick instructions on hosting, joining, solo practice, and troubleshooting. **Got it** returns you to the same screen.
 
+## Contest rules
+
+- Live contests must be run in a raid.
+- At least five contestants must register.
+- The raid leader is the contest official and cannot vote.
+- Contestants cannot vote for themselves.
+
+Live voting is not available in this alpha. You can try a sample ballot in solo practice.
+
 ## Personalize the addon
 
 Open **Options → Appearance**. Select **Tournament Armory**, **Goldleaf Grimoire**, **Studio Modern**, **Neon Circuit**, or **Snowglow Lodge** to preview it immediately on the live window. The swatches identify each look; the checkmark shows what you are previewing. **Apply theme** saves this character’s appearance and returns to Options. **Cancel** or closing the window discards an unapplied preview. Appearance is client-only and separate from the contest theme. High contrast and other interface settings still work with every skin.

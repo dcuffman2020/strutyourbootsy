@@ -551,21 +551,22 @@ function extra.buildHelp()
     label(header,"A quick guide to the transmog runway.",13,16,-41,muted,383)
 
     local sections={
-        {"Get started","Type /syb or click the Bootsy minimap icon. The minus button tucks the window away without leaving the contest."},
-        {"Host a raid contest","As raid leader, open registration. Set the theme or use a random one. Once five contestants are registered and roles are confirmed, start the contest. After prep, begin the runway and advance each turn."},
-        {"Join or watch","When registration opens, choose Contestant or Spectator and confirm. When it’s your turn, show off your outfit and use Emotes if you like. Live voting isn’t available in this build."},
-        {"Practice on your own","Outside a party or raid, choose Practice mode or type /syb practice. Try a contest with fictional players, including voting. Nothing is sent to a raid."},
-        {"If you get stuck","In a raid, use Refresh to catch up. If Start contest is disabled, check the lobby message for missing roles or contestants."},
+        {"Get started","Type /syb or click the Bootsy minimap icon. Use the minus button to tuck the window away.",60},
+        {"Contest rules","• Live contests must be run in a raid.\n• At least five contestants must register.\n• The raid leader is the contest official and cannot vote.\n• Contestants cannot vote for themselves.\nLive voting isn’t available in this alpha.",110},
+        {"Host a raid contest","Open registration and set a theme and prep time. Start once roles are confirmed. After prep, advance each runway turn.",67},
+        {"Join or watch","Choose Contestant or Spectator and confirm. Use Emotes during your turn if you like.",60},
+        {"Practice on your own","Outside a group, type /syb practice to try a contest and sample ballot with fictional players.",64},
+        {"If you get stuck","Use Refresh to catch up. If Start contest is disabled, check the lobby message.",60},
     }
-    local top=98
-    for i,section in ipairs(sections) do
-        local height=({68,98,88,78,68})[i]
+    local top=90
+    for _,section in ipairs(sections) do
+        local height=section[3]
         local card=panel(-top,height,palette.panel,palette.outline,help,24,417)
         label(card,section[1],14,14,-9,gold,389)
         label(card,section[2],13,14,-29,pale,389)
         top=top+height+4
     end
-    local done=button(help,"Got it",103,314,-524,function() help:Hide() end,"themeAccent")
+    local done=button(help,"Got it",103,314,-539,function() help:Hide() end,"themeAccent")
     done:SetHeight(28)
 
     -- Keep Help with the other window controls. Three independently tinted
