@@ -249,6 +249,19 @@ local function assertLabel(client, text)
     error("Missing UI label: " .. text)
 end
 
+local function assertActivePhase(client, text)
+    for _,frame in ipairs(client.frames) do
+        for _,caption in ipairs(rawget(frame,"labels") or {}) do
+            if caption:GetText()==text then
+                assert(frame.border[1]==212/255 and frame.border[2]==173/255 and frame.border[3]==98/255,
+                    "Active phase must keep the gold border")
+                return
+            end
+        end
+    end
+    error("Missing unprefixed active phase: "..text)
+end
+
 local function assertFill(client,label,r,g,b)
     local row=assert(client.find(label),"Missing visible result: "..label)
     assert(row.fill[1]==r/255 and row.fill[2]==g/255 and row.fill[3]==b/255,
@@ -506,6 +519,7 @@ local demo = makeClient()
 demo.event("PLAYER_LOGIN")
 demo.slash("practice")
 assertLabel(demo,"PRACTICE MODE  /  FICTIONAL ROSTER")
+assertActivePhase(demo,"Setup / Lobby")
 assertLabel(demo, "Five fictional contestants. No raid messages are sent.")
 assert(demo.click("Options"))
 assertLabel(demo,"Interface preferences")
@@ -544,6 +558,7 @@ assertLabel(demo,"You’re registered as a contestant. Waiting for the raid lead
 assert(not demo.click("Start contest") and not demo.click("Theme..."))
 assert(demo.click("Host view") and demo.click("Start contest"))
 assertLabel(demo,"Round 1 of 2: Preparation")
+assertActivePhase(demo,"Preparation")
 assertLabel(demo,"Theme: Midnight Masquerade")
 assert(demo.click("View as"))
 for _,name in ipairs({"Cinderstep","Valeweaver","Mossmantle","Copperwink","Thistledawn"}) do
@@ -561,6 +576,7 @@ assert(not demo.click("Begin runway"))
 assert(demo.click("Skip countdown") and demo.click("Begin runway"))
 for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cinderstep"}) do
     assertLabel(demo,"Round 1 of 2: Runway")
+    assertActivePhase(demo,"Runway")
     if j==1 then
         assertLabel(demo,"Turn 2:00")
         assert(demo.click("View as") and demo.click("Valeweaver"))

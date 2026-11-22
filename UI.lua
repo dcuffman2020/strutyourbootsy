@@ -194,7 +194,6 @@ local function paintPhases(index)
         local c=i==index and gold or palette.outline
         decorate(p.frame,i==index and palette.selected or palette.panel,c)
         p.caption:SetTextColor(unpackColor(i==index and pale or i<index and palette.success or muted))
-        p.caption:SetText(i==index and ("• "..p.text) or p.text)
     end
 end
 
