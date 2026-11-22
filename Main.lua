@@ -20,6 +20,39 @@ local function say(message)
     DEFAULT_CHAT_FRAME:AddMessage("|cffffd36aStrut Your Bootsy:|r " .. message)
 end
 
+-- Only a successful, locally initiated host transition may reach this path.
+-- No warnings are triggered by network messages, refresh, or timer ticks.
+local raidWarnings={}
+
+local function sendRaidWarning(key, text)
+    if practice or not IsInRaid() or not network or not network:IsAuthority()
+        or network.originalLeader~=network.leader or not network.sessionId then return false,"not_raid_leader" end
+    if raidWarnings.session~=network.sessionId then raidWarnings={session=network.sessionId} end
+    if raidWarnings[key] then return false,"already_announced" end
+    local api=C_ChatInfo and C_ChatInfo.SendChatMessage
+    if type(api)~="function" then return false,"warning_unavailable" end
+    raidWarnings[key]=true -- No automated replay or duplicate if delivery is ambiguous.
+    local ok,result=pcall(api,text,"RAID_WARNING")
+    if not ok or result==false then
+        raidWarnings[key]=nil
+        return false,"warning_unavailable"
+    end
+    return true
+end
+
+local function phaseWarning(key, text)
+    local ok, reason=sendRaidWarning(key,"Strut Your Bootsy: "..text)
+    if not ok and reason=="warning_unavailable" then say("Raid Warning unavailable: "..text) end
+end
+
+local function winnerWarning(names)
+    return "Congratulations to "..table.concat(names," ").."!"
+end
+
+local function practiceWarning(text)
+    say("[Practice Raid Warning] "..text)
+end
+
 local function localRealm()
     return GetNormalizedRealmName()
 end
@@ -119,6 +152,7 @@ local function openRegistration()
     local ok, reason = network:StartSession(id)
     if not ok then return false, reason end
     local queued, delivery = network:BeginDiscovery()
+    if queued then phaseWarning("registration","Registration is open. Use /syb to join.") end
     C_Timer.After(Network.DISCOVERY_SECONDS, function()
         if network.sessionId == id and network.phase == "registration" then network:ClassifyDiscovery() end
     end)
@@ -211,6 +245,7 @@ local function enterPractice()
         end
         practice={id="practice-"..practiceCounter,contest=c,members=members,ballot={},themePool={},
             settings={rounds=1,theme="Random",prep=120,vote=60},runwaySeconds=Network.RUNWAY_SECONDS}
+        practiceWarning("Registration is open. Use /syb to join.")
     end
     notice=nil
     UI.Show()
@@ -326,6 +361,41 @@ local function practiceAction(action, argument, value)
     return false,"unsupported_command"
 end
 
+local function runPracticeAction(action,...)
+    local ok,reason=practiceAction(action,...)
+    if not ok then return ok,reason end
+    local c=practice.contest
+    if action=="START" or action=="NEXT_ROUND" then
+        practiceWarning(("Round %d preparation is open. Theme: %s."):format(c.round,practice.preparation.theme))
+    elseif action=="BEGIN_RUNWAY" then
+        practiceWarning(("Round %d runway has begun."):format(c.round))
+    elseif action=="ADVANCE" and c.phase=="runway_complete" then
+        practiceWarning(("Round %d runway is complete."):format(c.round))
+    elseif action=="VOTING" then
+        practiceWarning(("Round %d voting is open."):format(c.round))
+    elseif action=="CLOSE_VOTE" then
+        local best,names=nil,{}
+        for _,name in ipairs(c.order) do
+            local score=c.scores[c.round][name]
+            if score and (not best or score>=best) then
+                if score~=best then best,names=score,{} end
+                names[#names+1]=name
+            end
+        end
+        local result=#names>0 and (" Top score: "..table.concat(names,", ")..".") or ""
+        practiceWarning(("Round %d voting is closed."):format(c.round)..result)
+    elseif action=="REVEAL" and not practice.podiumAnnounced then
+        local n=math.min(#practice.reveal,3)
+        if n>0 and practice.revealCount==n then
+            local names={}
+            for i=1,n do names[i]=practice.reveal[i].name end
+            practice.podiumAnnounced=true
+            practiceWarning(winnerWarning(names))
+        end
+    end
+    return ok,reason
+end
+
 local function view()
     if practice then return practiceView() end
     local p = network and network:GetProjection() or {}
@@ -413,10 +483,17 @@ local function run(action, ...)
 end
 
 local function adminAction(action)
-    if practice then return practiceAction(action) end
+    if practice then return runPracticeAction(action) end
     if not network then return false,"not_registered" end
     local ok, reason = network:AdminCommand(action,commandId())
     if not ok then return false,reason end
+    if action=="START" and network.preparation then
+        phaseWarning("preparation","Preparation is open. Theme: "..network.preparation.theme..".")
+    elseif action=="BEGIN_RUNWAY" then
+        phaseWarning("runway","The runway has begun.")
+    elseif action=="ADVANCE" and network.phase=="runway_complete" then
+        phaseWarning("runway_complete","The runway is complete.")
+    end
     local id, version = network.sessionId, network.version
     if not network:BroadcastContest() then
         C_Timer.After(Network.SEND_WINDOW + 0.25, function()
@@ -424,6 +501,34 @@ local function adminAction(action)
         end)
     end
     return true
+end
+
+local function announceWinners(input)
+    if practice or not state or not network then return false,"Finish a live runway first." end
+    network:RefreshRoster()
+    if not IsInRaid() or not network:IsAuthority() or network.originalLeader~=network.leader then
+        return false,"Only the contest’s raid leader can announce winners."
+    end
+    if network.phase~="runway_complete" then return false,"Finish the runway before announcing winners." end
+    local names,seen={},{}
+    for token in input:gmatch("%S+") do
+        local matches={}
+        for _,name in ipairs(state.order) do
+            local full=name:lower()
+            if token==full or token==full:match("^[^-]+") then matches[#matches+1]=name end
+        end
+        if #matches~=1 or seen[matches[1]] then
+            return false,"Use three different contestants from this runway. Add -Realm if a name is ambiguous."
+        end
+        local name=matches[1]
+        seen[name]=true
+        names[#names+1]=name
+    end
+    if #names~=3 then return false,"Usage: /syb announce winners First Second Third" end
+    local ok,reason=sendRaidWarning("podium",winnerWarning(names))
+    if ok then return true end
+    if reason=="already_announced" then return false,"Winners have already been announced for this contest." end
+    return false,"Could not send the winners as a Raid Warning."
 end
 
 frame:RegisterEvent("PLAYER_LOGIN")
@@ -438,7 +543,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             normalizeTheme=Network.NormalizeCustomTheme,setCustomTheme=setCustomTheme,
             setRunwaySeconds=setRunwaySeconds,runwayOptions=Network.RUNWAY_OPTIONS,
             groupActive=grouped, enterPractice=function() run(enterPractice) end,
-            practiceAction=function(...) run(practiceAction,...) end,
+            practiceAction=function(...) run(runPracticeAction,...) end,
             skipVote=function()
                 if practice and practice.contest.phase=="voting" then practice.voteEndsAt=GetServerTime(); UI.Refresh() end
             end,
@@ -454,7 +559,11 @@ frame:SetScript("OnEvent", function(_, event, ...)
                     UI.Refresh()
                 end
             end,
-            cancel=function() run(function() return network:CancelRegistration() end) end,
+            cancel=function() run(function()
+                local ok,reason=network:CancelRegistration()
+                if ok then phaseWarning("cancelled","Registration was cancelled.") end
+                return ok,reason
+            end) end,
             submitRole=function(role) run(submitRole, role) end,
             confirmPassive=function(name, guid)
                 network:RefreshRoster()
@@ -492,6 +601,9 @@ SlashCmdList.STRUTYOURBOOTSY = function(input)
         say(localStatus .. "; raid leader: " .. (p.leader or "none") ..
             "; session: " .. (p.sessionId or "none") .. " v" .. (p.version or 0) ..
             "; lobby: " .. (p.lobbyState or "unavailable") .. "; last reject: " .. (p.lastRejected or "none"))
+    elseif input == "announce winners" or input:match("^announce winners%s") then
+        local ok,reason=announceWinners(input:sub(#"announce winners"+1))
+        if not ok then say(reason) end
     elseif input == "devstart" then
         developmentState = Core.New(UnitName("player"), 1)
         say("Created a local test session. Multiplayer controls are unaffected.")

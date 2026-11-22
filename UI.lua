@@ -22,10 +22,11 @@ local gold,pale,muted=rgb(0xD4AD62),rgb(0xF4EADD),rgb(0xBCC9D5)
 local palette={window=rgb(0x0E151D),panel=rgb(0x151F2A),outline=rgb(0x435364),
     header=rgb(0x411628),cta=rgb(0x751E35),selected=rgb(0x352231),
     tag=rgb(0x222F3C),trim=rgb(0x866638),success=rgb(0xA9E7B7),info=rgb(0xC0DFFA)}
+-- Approved Armory gold, cool neutral and warm trim, reused as medal surfaces.
 local medals={
-    {fill=rgb(0xE0B95A),edge=rgb(0xF6D788)},
-    {fill=rgb(0xC5CED8),edge=rgb(0xE8EEF4)},
-    {fill=rgb(0xC68B61),edge=rgb(0xE8AC84)},
+    {fill=gold,edge=rgb(0x866638),ink=palette.window},
+    {fill=muted,edge=palette.outline,ink=palette.window},
+    {fill=palette.trim,edge=gold,ink={1,1,1}},
 }
 local labels={}
 local themeNames={"Random","Royalty","Out of This World","Back from the Dead","Heroes of Azeroth"}
@@ -590,7 +591,7 @@ local function optionRows(items,customFirst)
         control:EnableMouse(item[2]~=nil)
         paintSelection(control,item[3])
         local medal=medals[item[4]]
-        control.caption:SetTextColor(unpackColor(medal and palette.window or pale))
+        control.caption:SetTextColor(unpackColor(medal and medal.ink or pale))
         if medal then decorate(control,medal.fill,medal.edge) end
         control:Show()
     end
@@ -974,7 +975,8 @@ function UI.Refresh()
         primary:SetText("Begin voting")
         primary:SetShown(p.practice == true)
         primary:SetEnabled(p.practice == true)
-        prompt = ""
+        prompt = not p.practice and p.isLeader
+            and "Manual podium: /syb announce winners First Second Third" or ""
     else
         title:SetText("Welcome to the runway")
         summary:SetText((IsInRaid() and "In raid" or "Not in a raid. Join a raid to participate.") ..

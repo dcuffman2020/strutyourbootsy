@@ -98,8 +98,13 @@ local function makeClient(index)
     end}
     env.Enum = {SendAddonMessageResult={Success=0}}
     local registered = false
-    client.emotes={}
+    client.emotes,client.warnings={},{}
     env.C_ChatInfo = {
+        SendChatMessage=function(message,channel)
+            if client.blockWarning then return false end
+            assert(client.inRaid and index==1 and channel=="RAID_WARNING")
+            client.warnings[#client.warnings+1]=message
+        end,
         PerformEmote=function(token)
             if client.blockEmote then return false end
             client.emotes[#client.emotes+1]=token
@@ -248,8 +253,8 @@ local function assertFill(client,label,r,g,b)
     local row=assert(client.find(label),"Missing visible result: "..label)
     assert(row.fill[1]==r/255 and row.fill[2]==g/255 and row.fill[3]==b/255,
         "Incorrect result color for "..label)
-    if r>150 then
-        assert(row.caption.textColor[1]==14/255, "Metallic row text should contrast with its fill")
+    if r>150 or r==134 then
+        assert(row.caption.textColor[1]==(r==134 and 1 or 14/255), "Metallic row text should contrast with its fill")
     end
 end
 
@@ -364,6 +369,9 @@ end
 leader = group[1]
 checkHiddenTheme = true
 assert(leader.click("Open registration"))
+assert(#leader.warnings==1 and leader.warnings[1]=="Strut Your Bootsy: Registration is open. Use /syb to join.")
+leader.slash("announce winners Player3 Player4 Player5")
+assert(#leader.warnings==1)
 deliver()
 for i = 2, 6 do
     advance(6)
@@ -388,6 +396,7 @@ checkHiddenTheme = false
 local finishingAt = group[1].env.GetServerTime() + 120
 group[6].missReveal = true
 assert(leader.click("Start contest"))
+assert(leader.warnings[2]=="Strut Your Bootsy: Preparation is open. Theme: Guild-Forged, Round 1.")
 deliver()
 for i = 1, 5 do
     assertLabel(group[i], "Theme: Guild-Forged, Round 1")
@@ -419,6 +428,7 @@ leader.event("GROUP_ROSTER_UPDATE")
 for i=2,6 do assert(not group[i].click("Begin runway")) end
 group[6].missReveal = false
 assert(leader.click("Begin runway")); deliver()
+assert(leader.warnings[3]=="Strut Your Bootsy: The runway has begun.")
 for _,member in ipairs(group) do assertLabel(member,"Turn 1:00") end
 advance(60)
 for _,member in ipairs(group) do
@@ -457,6 +467,7 @@ for j,name in ipairs(order) do
         group[6].missReveal=true -- miss this turn update; recover via refresh below.
     end
     assert(leader.click(j==5 and "Finish runway" or "Next contestant")); deliver()
+    assert(#leader.warnings==(j==5 and 4 or 3))
     if j==1 then
         assert(not group[3].click("Emotes +") and not group[3].click("Chicken"))
         assertLabel(group[6],"Presenting  1 of 5")
@@ -477,6 +488,19 @@ leader.slash("practice")
 assert(leader.chat[#leader.chat]:find("Leave your party or raid",1,true))
 
 -- Exercise the public solo launcher and five-step loop. No raid packets may leave.
+assert(leader.warnings[4]=="Strut Your Bootsy: The runway is complete.")
+group[2].slash("announce winners Player3 Player4 Player5")
+assert(#group[2].warnings==0)
+leader.slash("announce winners Player3 Player3 Player5")
+leader.slash("announce winners Player3 Player9 Player5")
+assert(#leader.warnings==4)
+leader.blockWarning=true
+leader.slash("announce winners Player3 Player4 Player5")
+assert(#leader.warnings==4)
+leader.blockWarning=false
+leader.slash("announce winners Player3 Player4 Player5")
+leader.slash("announce winners Player4 Player3 Player5")
+assert(#leader.warnings==5 and leader.warnings[5]=="Congratulations to Player3-Realm Player4-Realm Player5-Realm!")
 roster, clients, packets = {}, {}, {}
 local demo = makeClient()
 demo.event("PLAYER_LOGIN")
@@ -598,9 +622,9 @@ for round=1,2 do
     assert(not rate("Valeweaver",4))
     assert(demo.click("Skip vote timer") and demo.click("View round results"))
     assertLabel(demo,"Round results")
-    assertFill(demo,"1st place · Valeweaver · 5.0 / 5",224,185,90)
-    assertFill(demo,"2nd place · Mossmantle · 4.0 / 5",197,206,216)
-    assertFill(demo,"3rd place · Copperwink · 3.0 / 5",198,139,97)
+    assertFill(demo,"1st place · Valeweaver · 5.0 / 5",212,173,98)
+    assertFill(demo,"2nd place · Mossmantle · 4.0 / 5",188,201,213)
+    assertFill(demo,"3rd place · Copperwink · 3.0 / 5",134,102,56)
     assertFill(demo,"Cinderstep · Not rated",21,31,42)
     if round==1 then
         assert(demo.click("Begin round 2") and demo.click("Skip countdown") and demo.click("Begin runway"))
@@ -614,12 +638,18 @@ assertFill(demo,"1st place · Not revealed",21,31,42)
 assertFill(demo,"2nd place · Not revealed",21,31,42)
 assertFill(demo,"3rd place · Not revealed",21,31,42)
 assert(demo.click("Next reveal"))
-assertFill(demo,"3rd place · Copperwink",198,139,97)
+assertFill(demo,"3rd place · Copperwink",134,102,56)
 assert(demo.click("Next reveal"))
-assertFill(demo,"2nd place · Mossmantle",197,206,216)
+assertFill(demo,"2nd place · Mossmantle",188,201,213)
 assert(demo.click("Next reveal"))
-assertFill(demo,"1st place · Valeweaver",224,185,90)
+assertFill(demo,"1st place · Valeweaver",212,173,98)
 assertFill(demo,"Honorable mention · Thistledawn",21,31,42)
+local localWarnings=0
+for _,line in ipairs(demo.chat) do
+    if line:find("[Practice Raid Warning]",1,true) then localWarnings=localWarnings+1 end
+end
+assert(localWarnings==12 and #demo.warnings==0)
+assert(demo.chat[#demo.chat]:find("Congratulations to Valeweaver Mossmantle Copperwink!",1,true))
 assert(demo.click("Practice again"))
 assertLabel(demo,"Registration lobby")
 demo.slash("devnetstart")
@@ -637,8 +667,8 @@ demo.ns.UI.Initialize({getProjection=function()
             {name="Thistledawn",average=2},{name="Cinderstep"}}}
 end})
 demo.ns.UI.Show()
-assertFill(demo,"Tied for 1st place · Copperwink · 5.0 / 5",224,185,90)
-assertFill(demo,"Tied for 1st place · Valeweaver · 5.0 / 5",224,185,90)
-assertFill(demo,"3rd place · Mossmantle · 4.0 / 5",198,139,97)
+assertFill(demo,"Tied for 1st place · Copperwink · 5.0 / 5",212,173,98)
+assertFill(demo,"Tied for 1st place · Valeweaver · 5.0 / 5",212,173,98)
+assertFill(demo,"3rd place · Mossmantle · 4.0 / 5",134,102,56)
 assertFill(demo,"Cinderstep · Not rated",21,31,42)
 print("Registration, contestant preview, emote grid, and medal colors passed")
