@@ -91,6 +91,11 @@ local function button(parent, text, width, x, y, handler, accent)
     caption:SetFont(STANDARD_TEXT_FONT,13)
     caption:SetTextColor(unpackColor(pale))
     caption:SetPoint("CENTER")
+    caption:SetWidth(width-12)
+    caption:SetJustifyH("CENTER")
+    caption:SetWordWrap(false)
+    caption:SetMaxLines(1)
+    control.caption=caption
     control:SetFontString(caption)
     control:SetText(text)
     decorate(control,accent and palette.cta or palette.tag,accent and gold or palette.outline)
@@ -107,9 +112,14 @@ local function button(parent, text, width, x, y, handler, accent)
         if control:IsEnabled() then control:SetBackdropBorderColor(unpackColor(gold)) end
     end)
     control:SetScript("OnLeave",function()
-        control:SetBackdropBorderColor(unpackColor(accent and control:IsEnabled() and gold or palette.outline))
+        control:SetBackdropBorderColor(unpackColor((control.selected or accent and control:IsEnabled()) and gold or palette.outline))
     end)
     return control
+end
+
+local function paintSelection(control,selected)
+    control.selected=selected==true
+    decorate(control,selected and palette.selected or palette.panel,selected and gold or palette.outline)
 end
 
 local function panel(y,height,fill,edge,parent,x,width)
@@ -202,13 +212,13 @@ local function refreshPreparationClock()
 end
 
 local function buildThemeAndPreviewControls()
-    extra.viewButton=button(windowHeader,"View as",66,238,-12,function()
+    extra.viewButton=button(windowHeader,"View as",78,238,-12,function()
         if extra.previewName then extra.previewName,extra.viewPicker=nil,nil
         else extra.viewPicker=not extra.viewPicker end
         UI.Refresh()
     end)
-    extra.themeButton=button(overview,"Theme...",92,312,-66,openTheme)
-    extra.timerButton=button(overview,"Runway timer",114,188,-66,function()
+    extra.themeButton=button(overview,"Theme...",113,291,-66,openTheme)
+    extra.timerButton=button(overview,"Runway timer",114,168,-66,function()
         extra.timerSetup=true
         UI.Refresh()
     end)
@@ -224,9 +234,63 @@ local function buildThemeAndPreviewControls()
     extra.themeInput:SetScript("OnTextChanged",function() if extra.themeEditor then extra.themeFeedback=nil;UI.Refresh() end end)
 end
 
+local function presenting(p)
+    if p.isLeader or p.localRole~="contestant" or p.phase~="runway" or not p.runway or p.runwayBlocked then return false end
+    local actor=p.practice and extra.previewName or not p.practice and context.playerName()
+    return actor and actor==p.runway.current
+end
+
+local function buildEmoteDrawer()
+    local function canChoose()
+        return window:IsShown() and extra.emoteToggle:IsShown() and presenting(context.getProjection())
+    end
+    -- Practice uses an explicit preview role on an otherwise read-only host projection.
+    local function canPreview()
+        local p=context.getProjection()
+        return window:IsShown() and extra.emoteToggle:IsShown() and p.practice and extra.previewName
+            and p.phase=="runway" and p.runway and p.runway.current==extra.previewName and not p.runwayBlocked
+    end
+    extra.emoteToggle=button(info,"Emotes +",135,264,-8,function()
+        if not (canChoose() or canPreview()) then return end
+        extra.emoteOpen=not extra.emoteOpen
+        if not extra.emoteOpen then extra.emoteFeedback=nil end
+        UI.Refresh()
+    end)
+    extra.emoteDrawer=panel(-72,66,palette.window,palette.trim,info,17,383)
+    extra.emoteNote=label(extra.emoteDrawer,"",11,8,-40,muted,367)
+    for i,text in ipairs({"Bow","Wave","Dance","Flex","Chicken"}) do
+        local name=text
+        button(extra.emoteDrawer,name,69,8+(i-1)*74,-7,function()
+            if not extra.emoteDrawer:IsShown() or not extra.emoteOpen then return end
+            if canPreview() then
+                extra.emoteFeedback="Practice: "..name.." selected. Nothing was sent to WoW."
+            elseif canChoose() then
+                local api=C_ChatInfo and C_ChatInfo.PerformEmote
+                local ok,performed
+                if type(api)=="function" then ok,performed=pcall(api,name:upper()) end
+                extra.emoteFeedback=ok and performed==true and ("Performed "..name..".")
+                    or "Emote unavailable. Try your usual chat command."
+            else return end
+            UI.Refresh()
+        end)
+    end
+end
+
+local function updateEmoteDrawer(p)
+    local active=presenting(p) and not preferencesMode and not extra.viewPicker
+    local key=active and table.concat({p.sessionId or "",p.round or 1,p.runway.index,p.runway.current},":") or nil
+    if key~=extra.emoteTurn then
+        extra.emoteTurn,extra.emoteOpen,extra.emoteFeedback=key,nil,nil
+    end
+    extra.emoteToggle:SetShown(key~=nil)
+    extra.emoteToggle:SetText(extra.emoteOpen and "Emotes −" or "Emotes +")
+    extra.emoteDrawer:SetShown(key~=nil and extra.emoteOpen==true)
+    extra.emoteNote:SetText(extra.emoteFeedback or (p.preview and "Practice only. Emotes won’t play in WoW." or "Choose an emote to perform it."))
+end
+
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
-    window:SetSize(465, 537)
+    window:SetSize(465, 564)
     window:SetPoint("CENTER")
     window:SetFrameStrata("DIALOG")
     window:SetMovable(true)
@@ -240,6 +304,7 @@ local function build()
         self:StopMovingOrSizing()
         if preferencesMode then draftPreferences,preferencesMode=nil,nil;applyPreferences() end
         extra.themeEditor,extra.viewPicker,extra.timerSetup=nil,nil,nil
+        extra.emoteOpen,extra.emoteFeedback=nil,nil
         if extra.themeInput then extra.themeInput:ClearFocus() end
     end)
     window:SetScript("OnUpdate", function(_, elapsed)
@@ -265,7 +330,8 @@ local function build()
     logo:SetPoint("LEFT",12,0)
     logo:SetTexture(assetPath.."BootsyMinimap.tga")
     brand=label(windowHeader,"STRUT YOUR BOOTSY",16,54,-9,gold)
-    badge=label(windowHeader,"",10,54,-31,muted)
+    badge=label(windowHeader,"",10,54,-31,muted,175)
+    badge:SetMaxLines(1)
     for i,phase in ipairs({"Setup / Lobby","Preparation","Runway","Voting","Results"}) do
         local cell=panel(-78,28,palette.panel,palette.outline,window,24+(i-1)*84,81)
         local tag=label(cell,phase,10,0,0,muted,81)
@@ -280,11 +346,11 @@ local function build()
     endOfTimer=label(overview,"",25,13,-61,gold,391)
     heroName=label(overview,"",24,13,-30,pale,391)
     heroNext=label(overview,"",13,13,-71,gold,391)
-    contestant = button(overview, "Contestant", 132, 18, -64, function()
+    contestant = button(overview, "Contestant", 148, 18, -64, function()
         selectedRole = "contestant"
         UI.Refresh()
     end)
-    spectator = button(overview, "Spectator", 132, 158, -64, function()
+    spectator = button(overview, "Spectator", 148, 174, -64, function()
         selectedRole = "spectator"
         UI.Refresh()
     end)
@@ -299,17 +365,17 @@ local function build()
     listContent:SetSize(378, 98)
     list:SetScrollChild(listContent)
 
-    actionNotice=label(window,"",12,25,-421,muted,415)
-    status=label(window,"",13,25,-451,gold,415)
+    actionNotice=label(window,"",12,25,-445,muted,415)
+    status=label(window,"",13,25,-474,gold,415)
     local trim=window:CreateTexture(nil,"ARTWORK")
     trim:SetColorTexture(gold[1],gold[2],gold[3],.6)
     trim:SetSize(417,1)
-    trim:SetPoint("TOPLEFT",24,-481)
+    trim:SetPoint("TOPLEFT",24,-504)
     local jewel=window:CreateTexture(nil,"OVERLAY")
     jewel:SetTexture(assetPath.."ArmoryTrim.tga")
     jewel:SetSize(20,7)
-    jewel:SetPoint("TOP",0,-478)
-    primary = button(window, "Open registration", 152, 285, -485, function()
+    jewel:SetPoint("TOP",0,-501)
+    primary = button(window, "Open registration", 152, 285, -516, function()
         local p = context.getProjection()
         if preferencesMode then closePreferences(true); return end
         if extra.themeEditor then useTheme(false);return end
@@ -336,7 +402,7 @@ local function build()
             context.submitRole(p.submittedRole or selectedRole)
         end
     end,true)
-    secondary = button(window, "Refresh", 101, 28, -485, function()
+    secondary = button(window, "Refresh", 101, 28, -516, function()
         local p=context.getProjection()
         if preferencesMode then closePreferences(false);return end
         if extra.themeEditor then closeTheme();return end
@@ -347,7 +413,7 @@ local function build()
         elseif p.isLeader and p.sessionId and p.phase == "registration" then context.cancel()
         else context.refresh() end
     end)
-    confirmPassive = button(window, "Confirm no addon", 140, 135, -485, function()
+    confirmPassive = button(window, "Confirm no addon", 140, 135, -516, function()
         if selectedObserver then context.confirmPassive(selectedObserver.name, selectedObserver.guid) end
     end)
     confirmPassive:SetScript("OnEnter", function(self)
@@ -357,8 +423,8 @@ local function build()
     end)
     confirmPassive:SetScript("OnLeave", GameTooltip_Hide)
 
-    skipPrep = button(window, "Skip countdown", 140, 135, -485, function() context.skipPreparation() end)
-    utility=button(window,"",140,135,-485,function()
+    skipPrep = button(window, "Skip countdown", 140, 135, -516, function() context.skipPreparation() end)
+    utility=button(window,"",140,135,-516,function()
         local p=context.getProjection()
         if extra.themeEditor then useTheme(true);return end
         if extra.previewName or extra.viewPicker then return end
@@ -370,8 +436,9 @@ local function build()
         elseif p.phase=="voting" and p.practice then context.skipVote()
         else context.enterPractice() end
     end)
-    prefsLink=button(windowHeader,"Options",58,310,-12,openPreferences)
+    prefsLink=button(windowHeader,"Options",58,318,-12,openPreferences)
     buildThemeAndPreviewControls()
+    buildEmoteDrawer()
     local close=button(windowHeader,"",25,380,-12,function() window:Hide() end)
     close:SetHeight(25)
     local closeIcon=close:CreateTexture(nil,"ARTWORK")
@@ -461,7 +528,7 @@ local function actionLabel(control,text,enabled)
     control:SetEnabled(enabled~=false)
 end
 
-local function optionRows(items)
+local function optionRows(items,customFirst)
     list:Hide()
     for i,item in ipairs(items) do
         local control=choices[i]
@@ -472,11 +539,16 @@ local function optionRows(items)
             control:SetHeight(26)
             choices[i]=control
         end
+        control:ClearAllPoints()
+        control:SetPoint("TOPLEFT",16,customFirst and (i==1 and -7 or -(41+(i-2)*25)) or -(7+(i-1)*28))
+        control:SetHeight(customFirst and (i==1 and 31 or 23) or 26)
+        control.caption:SetMaxLines(customFirst and i==1 and 2 or 1)
+        control.caption:SetWordWrap(customFirst and i==1)
         control.action=item[2]
         control:SetText(item[1])
         control:SetEnabled(true)
         control:EnableMouse(item[2]~=nil)
-        decorate(control,item[3] and palette.selected or palette.panel,item[3] and gold or palette.outline)
+        paintSelection(control,item[3])
         control:Show()
     end
 end
@@ -491,27 +563,34 @@ local function showSettings(p)
     }
     local step=data[w]
     title:SetText(step and step[1] or "Review your contest")
-    summary:SetText("Setup · "..w.." of 5\n"..(step and step[2] or "Check the settings before returning to registration."))
+    local hint=w==1 and ("Your contest will have %d %s."):format(cfg.rounds,cfg.rounds==1 and "round" or "rounds")
+        or step and step[2] or "Check the settings before returning to registration."
+    summary:SetText("Setup · "..w.." of 5\n"..hint)
     details:SetText("")
     roleHint:SetText("")
     local opts={}
+    local hasCustom=w==2 and cfg.customTheme~=nil
+    if hasCustom then
+        opts[1]={"Custom theme: "..cfg.customTheme,openTheme,true}
+        info:SetHeight(172)
+    end
     if step then
         for _,x in ipairs(step[4]) do
             local k,val=step[3],x
             local display=type(val)=="number" and (k=="rounds" and tostring(val) or (("%d:%02d"):format(math.floor(val/60),val%60))) or val
             local selected=cfg[k]==val and not (k=="theme" and cfg.customTheme)
-            opts[#opts+1]={(selected and "Selected: " or "")..display,
+            opts[#opts+1]={display,
                 function() context.practiceAction("SETTING",k,val) end, selected}
         end
     else
         opts={{"Rounds: "..cfg.rounds},{"Theme: "..(cfg.customTheme or cfg.theme)},{"Preparation: "..cfg.prep.." seconds"},{"Voting: "..cfg.vote.." seconds"}}
     end
-    optionRows(opts)
+    optionRows(opts,hasCustom)
     actionLabel(secondary,w==1 and "Cancel" or "Back")
     actionLabel(primary,w==5 and "Return to lobby" or "Continue")
     if w==2 then
-        actionLabel(extra.themeButton,"Custom theme")
-        return cfg.customTheme and ("Custom theme: "..cfg.customTheme) or "Choose a theme or enter a custom name."
+        actionLabel(extra.themeButton,hasCustom and "Edit theme" or "Custom theme")
+        return hasCustom and "Click the highlighted custom theme to edit it." or "Choose a theme or enter a custom name."
     end
     return "Practice setup only. Raid settings are unchanged."
 end
@@ -536,7 +615,7 @@ local function showRunwayTimer(p)
     for _,x in ipairs(context.runwayOptions) do
         local seconds=x
         local selected=p.runwaySeconds==seconds
-        options[#options+1]={(selected and "Selected: " or "")..clockText(seconds),
+        options[#options+1]={clockText(seconds),
             function()
                 local ok=context.setRunwaySeconds(seconds)
                 if ok then extra.timerSetup=nil end
@@ -669,6 +748,7 @@ function UI.Refresh()
     voteDeadline,voteExpiry,voteSubmitted=nil,nil,nil
     for _,choice in ipairs(choices) do choice:Hide() end
     info:Show()
+    info:SetHeight(150)
     votePanel:Hide()
     utility:Hide()
     extra.themeButton:Hide()
@@ -747,7 +827,7 @@ function UI.Refresh()
         prompt="Only the practice contest is paused."
     elseif lobby then
         title:SetText("Registration lobby")
-        if p.practice then actionLabel(utility,"Setup") end
+        if p.practice then actionLabel(utility,"Setup Contest") end
         actionLabel(extra.themeButton,"Theme...")
         if p.runwaySeconds then actionLabel(extra.timerButton,"Runway timer") end
         summary:SetText(("Contestants: %d / 5 minimum\nSpectators: %d\nPending addon responses: %d"):format(
@@ -767,11 +847,12 @@ function UI.Refresh()
         local role = p.localRole or p.submittedRole or selectedRole
         title:SetText("Choose your role")
         summary:SetText("Your participation")
-        contestant:SetText(role == "contestant" and "Selected: Contestant" or "Contestant")
-        spectator:SetText(role == "spectator" and "Selected: Spectator" or "Spectator")
+
         local canChoose = not p.localRole and not p.awaiting and not p.timedOut
         contestant:SetEnabled(canChoose)
         spectator:SetEnabled(canChoose)
+        paintSelection(contestant,role=="contestant")
+        paintSelection(spectator,role=="spectator")
         details:SetText(role == "spectator" and "Spectator rules" or "Contestant rules")
         roleHint:SetText(role == "spectator" and "Watch the runway and vote each round." or
             "Present your outfit each round. Vote for others.")
@@ -822,7 +903,7 @@ function UI.Refresh()
             updateRoster(order,true)
         else
             details:SetText("Runway status")
-            roleHint:SetText(p.preview and (r.current==extra.previewName and "You’re presenting now." or
+            roleHint:SetText(presenting(p) and "You’re presenting now." or p.preview and (r.current==extra.previewName and "Waiting for the runway to resume." or
                 r.upcoming==extra.previewName and "You’re up next. Get ready." or "Waiting for the raid leader to advance.")
                 or "The raid leader advances the runway.")
         end
@@ -858,6 +939,7 @@ function UI.Refresh()
         skipPrep:Hide()
         actionLabel(secondary,"Host view")
     end
+    updateEmoteDrawer(p)
     local noticeText = p.notice and (messages[p.notice] or ("Action failed (" .. p.notice .. "). Refresh and try again."))
     actionNotice:SetText(noticeText and noticeText ~= prompt and noticeText or "")
     status:SetText(prompt)

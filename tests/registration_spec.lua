@@ -19,6 +19,12 @@ function methods:SetText(value)
     if self.scripts.OnTextChanged then self.scripts.OnTextChanged(self) end
 end
 function methods:GetText() return rawget(self,"text") or "" end
+function methods:SetSize(w,h) self.width,self.height=w,h end
+function methods:SetHeight(h) self.height=h end
+function methods:SetWidth(w) self.width=w end
+function methods:SetPoint(...) self.anchor={...} end
+function methods:SetBackdropBorderColor(...) self.border={...} end
+function methods:EnableMouse(value) self.mouse=value end
 function methods:SetEnabled(value) self.enabled = value end
 function methods:Show() self.shown = true end
 function methods:Hide()
@@ -80,7 +86,13 @@ local function makeClient(index)
     end}
     env.Enum = {SendAddonMessageResult={Success=0}}
     local registered = false
+    client.emotes={}
     env.C_ChatInfo = {
+        PerformEmote=function(token)
+            if client.blockEmote then return false end
+            client.emotes[#client.emotes+1]=token
+            return true
+        end,
         RegisterAddonMessagePrefix=function() registered = not client.failPrefix; return registered and 0 or 1 end,
         IsAddonMessagePrefixRegistered=function() return registered end,
         SendAddonMessage=function(prefix, wire, channel, target)
@@ -110,19 +122,24 @@ local function makeClient(index)
         if frame.events[event] then frame.scripts.OnEvent(frame, event, ...) end
     end
     client.slash = env.SlashCmdList.STRUTYOURBOOTSY
-    client.click = function(text)
+    client.find = function(text)
         for _, frame in ipairs(client.frames) do
             local visible,ancestor=true,frame
             while ancestor do
                 if ancestor.shown==false then visible=false;break end
                 ancestor=rawget(ancestor,"parent")
             end
-            if visible and frame.text == text and frame.enabled == true then
-                frame.scripts.OnClick(frame)
-                return true
+            if visible and frame.text == text then
+                return frame
             end
         end
         return false
+    end
+    client.click = function(text)
+        local frame=client.find(text)
+        if not frame or frame.enabled~=true or not frame.scripts.OnClick or rawget(frame,"mouse")==false then return false end
+        frame.scripts.OnClick(frame)
+        return true
     end
     if index then clients[character.name .. "-Realm"] = client end
     return client
@@ -323,7 +340,7 @@ assert(not leader.click("Use theme"))
 input:SetText("  Guild-Forged, Round 1  ")
 assert(leader.click("Use theme"))
 assertLabel(leader,"Theme selected, hidden until Start: Guild-Forged, Round 1")
-assert(leader.click("Runway timer") and leader.click("Selected: 2:00"))
+assert(leader.click("Runway timer") and leader.click("2:00"))
 assert(leader.click("Runway timer") and leader.click("1:00"))
 checkHiddenTheme = false
 local finishingAt = group[1].env.GetServerTime() + 120
@@ -378,6 +395,17 @@ for j,name in ipairs(order) do
         if i>1 then assert(not member.click("Next contestant") and not member.click("Finish runway")) end
     end
     if j==1 then
+        local presenter=group[3]
+        for i,member in ipairs(group) do
+            if i~=3 then assert(not member.click("Emotes +") and not member.click("Bow")) end
+        end
+        assert(presenter.click("Emotes +") and presenter.click("Bow"))
+        assert(presenter.emotes[1]=="BOW" and #presenter.emotes==1)
+        assertLabel(presenter,"Performed Bow.")
+        presenter.blockEmote=true
+        assert(presenter.click("Chicken") and #presenter.emotes==1)
+        assertLabel(presenter,"Emote unavailable. Try your usual chat command.")
+        presenter.blockEmote=false
         roster[3].online=false; leader.event("GROUP_ROSTER_UPDATE")
         assert(not leader.click("Next contestant"))
         roster[3].online=true; leader.event("GROUP_ROSTER_UPDATE")
@@ -385,6 +413,7 @@ for j,name in ipairs(order) do
     end
     assert(leader.click(j==5 and "Finish runway" or "Next contestant")); deliver()
     if j==1 then
+        assert(not group[3].click("Emotes +") and not group[3].click("Chicken"))
         assertLabel(group[6],"Presenting  1 of 5")
         assertLabel(group[6],"Player3-Realm")
         group[6].missReveal=false
@@ -413,17 +442,31 @@ assert(demo.click("Options"))
 assertLabel(demo,"Interface preferences")
 assert(demo.click("High contrast: Off") and demo.click("Save preferences"))
 assert(demo.env.SYBCharacterDB.preferences.highContrast==true)
-assert(demo.click("Setup") and demo.click("5") and demo.click("Cancel"))
-assert(demo.click("Setup"))
-assert(demo.click("Selected: 1"))
+local setup=assert(demo.find("Setup Contest"))
+assert(setup.anchor[3]==-516 and setup.caption.width==128)
+assert(demo.click("Setup Contest") and demo.click("5") and demo.click("Cancel"))
+assert(demo.click("Setup Contest"))
+assert(demo.click("1"))
 assertLabel(demo,"How many rounds?")
+assertLabel(demo,"Setup · 1 of 5\nYour contest will have 1 round.")
 assert(demo.click("2"))
+assertLabel(demo,"Setup · 1 of 5\nYour contest will have 2 rounds.")
+assert(demo.find("2").selected and not demo.find("1").selected)
 assert(demo.click("Continue"))
 assertLabel(demo,"Choose themes")
 assert(demo.click("Custom theme"))
 demo.env.SYBThemeInput:SetText("Midnight Masquerade")
 assert(demo.click("Use theme"))
-assertLabel(demo,"Custom theme: Midnight Masquerade")
+local custom=assert(demo.find("Custom theme: Midnight Masquerade"))
+assert(custom.selected and custom.anchor[3] > demo.find("Random").anchor[3])
+assert(not demo.find("Selected: Random"))
+assert(demo.click("Custom theme: Midnight Masquerade") and demo.env.SYBThemeInput:GetText()=="Midnight Masquerade")
+demo.env.SYBThemeInput:SetText(string.rep("W",48))
+assert(demo.click("Use theme"))
+assert(demo.find("Custom theme: "..string.rep("W",48)).selected)
+assert(demo.click("Edit theme"))
+demo.env.SYBThemeInput:SetText("Midnight Masquerade")
+assert(demo.click("Use theme"))
 assert(demo.click("Continue") and demo.click("3:00") and demo.click("Continue"))
 assert(demo.click("0:30") and demo.click("Continue") and demo.click("Return to lobby"))
 assert(demo.click("View as") and demo.click("Valeweaver"))
@@ -447,6 +490,14 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         assertLabel(demo,"Turn 2:00")
         assert(demo.click("View as") and demo.click("Valeweaver"))
         assertLabel(demo,"You’re presenting now.")
+        assert(demo.click("Emotes +") and demo.click("Chicken"))
+        assertLabel(demo,"Practice: Chicken selected. Nothing was sent to WoW.")
+        assert(#demo.emotes==0)
+        assert(demo.click("Emotes −") and not demo.click("Chicken"))
+        assert(demo.click("Host view") and not demo.click("Emotes +"))
+        assert(demo.click("View as") and demo.click("Mossmantle"))
+        assert(not demo.click("Emotes +"))
+        assert(demo.click("Host view") and demo.click("View as") and demo.click("Valeweaver"))
         assertLabel(demo,"Up next: Mossmantle")
         assert(not demo.click("Next contestant") and not demo.click("Pause"))
         assert(demo.click("Host view"))

@@ -433,7 +433,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         SYBCharacterDB.preferences = SYBCharacterDB.preferences or {}
         setupNetwork()
         UI.Initialize({
-            getProjection=view, refresh=refresh, preferences=SYBCharacterDB.preferences,
+            getProjection=view, playerName=playerName, refresh=refresh, preferences=SYBCharacterDB.preferences,
             serverNow=GetServerTime, preparationSeconds=Network.PREPARATION_SECONDS,
             normalizeTheme=Network.NormalizeCustomTheme,setCustomTheme=setCustomTheme,
             setRunwaySeconds=setRunwaySeconds,runwayOptions=Network.RUNWAY_OPTIONS,
