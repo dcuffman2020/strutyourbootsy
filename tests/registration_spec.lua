@@ -46,6 +46,8 @@ function methods:IsShown() return self.shown end
 function methods:SetShown(value) self.shown = value end
 function methods:GetWidth() return 140 end
 function methods:GetHeight() return 140 end
+function methods:GetFrameLevel() return rawget(self,"level") or 1 end
+function methods:SetFrameLevel(level) self.level=level end
 function methods:GetCenter() return 100, 100 end
 function methods:GetEffectiveScale() return 1 end
 function methods:StartMoving() self.moving = true end
@@ -237,7 +239,7 @@ icon:close()
 assert(#bytes == 18 + 64 * 64 * 4 and bytes:byte(3) == 2)
 assert(bytes:byte(13) == 64 and bytes:byte(15) == 64 and bytes:byte(17) == 32 and bytes:byte(18) == 8)
 assert(bytes:byte(22) == 0 and bytes:byte(22 + (64 * 32 + 32) * 4) > 245)
-for _,asset in ipairs({"ArmoryClose","ArmoryTrim","ArmoryStarOn","ArmoryStarOff","SnowglowFlake"}) do
+for _,asset in ipairs({"ArmoryClose","ArmoryTrim","ArmoryStarOn","ArmoryStarOff","SnowglowFlake","HelpBubble"}) do
     local f=assert(io.open("Assets/"..asset..".tga","rb"))
     local b=f:read("*a");f:close()
     assert(b:byte(3)==2 and b:byte(17)==32 and #b==18+b:byte(13)*b:byte(15)*4)
@@ -254,6 +256,26 @@ for _,item in ipairs(window.labels) do if item:GetText()==footerText then footer
 assert(footer and footer.anchor[1]=="BOTTOMRIGHT" and footer.anchor[2]==window and footer.wordWrap==false)
 assert(footer.anchor[3]=="BOTTOMRIGHT" and footer.anchor[4]==-39 and footer.anchor[5]==11)
 local header=assert(solo.find("−")).parent
+local bubble=assert(solo.find("?"))
+local help=solo.env.SYBHelpWindow
+assert(bubble.parent==header and bubble.anchor[2]+bubble.width<assert(solo.find("Options")).anchor[2])
+assert(help.parent==window and help.level>window:GetFrameLevel() and help.mouse==true and not help:IsShown())
+assert(solo.click("?") and help:IsShown())
+local topics={}
+for _,frame in ipairs(solo.frames) do
+    if frame.parent==help then
+        for _,line in ipairs(rawget(frame,"labels") or {}) do topics[line:GetText()]=true end
+    end
+end
+for _,topic in ipairs({"Strut Your Bootsy Help","Get started","Host a raid contest","Join or watch","Practice on your own","If you get stuck"}) do
+    assert(topics[topic],topic.." missing from help")
+end
+assert(solo.click("Got it") and not help:IsShown() and window:IsShown())
+assert(solo.click("?"))
+window:Hide()
+assert(not help:IsShown())
+solo.slash("")
+assert(not help:IsShown() and window:IsShown())
 local bar=solo.env.SYBMinimizedBar
 assert(not window.scripts.OnDragStart and not bar:IsShown())
 header.scripts.OnDragStart(header)
@@ -647,6 +669,9 @@ local function visibleFlakes(client)
 end
 assert(visibleFlakes(demo)==0)
 assert(demo.click("Options") and demo.click("Appearance: Tournament Armory") and demo.click("Snowglow Lodge"))
+assertWindowSkin(demo,16,31,39)
+assert(demo.click("?") and demo.env.SYBHelpWindow:IsShown())
+assert(demo.click("Got it") and not demo.env.SYBHelpWindow:IsShown())
 assertWindowSkin(demo,16,31,39)
 assert(visibleFlakes(demo)==3 and saved.appearance=="armory")
 assert(demo.find("✓  Snowglow Lodge") and demo.click("Cancel"))

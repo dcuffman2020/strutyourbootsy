@@ -508,6 +508,68 @@ function extra.addReleaseFooter()
     footer:SetMaxLines(1)
 end
 
+-- The help layer covers the addon only. It never changes the active contest or draft settings.
+function extra.buildHelp()
+    local help=CreateFrame("Frame","SYBHelpWindow",window,"BackdropTemplate")
+    extra.help=help
+    help:SetAllPoints(window)
+    help:SetFrameLevel(window:GetFrameLevel()+30)
+    help:EnableMouse(true)
+    help:EnableMouseWheel(true)
+    help:SetScript("OnMouseWheel",function() end)
+    decorate(help,palette.window,gold)
+
+    local header=panel(-17,68,palette.header,palette.trim,help,24,417)
+    label(header,"Strut Your Bootsy Help",23,16,-10,pale,383)
+    label(header,"A quick guide to the transmog runway.",13,16,-41,muted,383)
+
+    local sections={
+        {"Get started","Type /syb or click the Bootsy minimap icon. The minus button tucks the window away without leaving the contest."},
+        {"Host a raid contest","As raid leader, open registration. Set the theme or use a random one. Once five contestants are registered and roles are confirmed, start the contest. After prep, begin the runway and advance each turn."},
+        {"Join or watch","When registration opens, choose Contestant or Spectator and confirm. When it’s your turn, show off your outfit and use Emotes if you like. Live voting isn’t available in this build."},
+        {"Practice on your own","Outside a party or raid, choose Practice mode or type /syb practice. Try a contest with fictional players, including voting. Nothing is sent to a raid."},
+        {"If you get stuck","In a raid, use Refresh to catch up. If Start contest is disabled, check the lobby message for missing roles or contestants."},
+    }
+    local top=98
+    for i,section in ipairs(sections) do
+        local height=({68,98,88,78,68})[i]
+        local card=panel(-top,height,palette.panel,palette.outline,help,24,417)
+        label(card,section[1],14,14,-9,gold,389)
+        label(card,section[2],13,14,-29,pale,389)
+        top=top+height+4
+    end
+    local done=button(help,"Got it",103,314,-524,function() help:Hide() end,true)
+    done:SetHeight(28)
+
+    local bubble=CreateFrame("Button",nil,windowHeader)
+    bubble:SetPoint("TOPLEFT",242,-7)
+    bubble:SetSize(26,26)
+    local circle=bubble:CreateTexture(nil,"ARTWORK")
+    circle:SetAllPoints()
+    circle:SetTexture(assetPath.."HelpBubble.tga")
+    local mark=label(bubble,"?",15,0,0,gold)
+    mark:ClearAllPoints()
+    mark:SetPoint("CENTER",bubble,"CENTER",0,2)
+    bubble:SetFontString(mark)
+    bubble:SetText("?")
+    local highlight=bubble:CreateTexture(nil,"HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetTexture(assetPath.."HelpBubble.tga")
+    highlight:SetAlpha(.35)
+    bubble:SetScript("OnEnter",function(self)
+        GameTooltip:SetOwner(self,"ANCHOR_TOP")
+        GameTooltip:SetText("How to play")
+        GameTooltip:Show()
+    end)
+    bubble:SetScript("OnLeave",GameTooltip_Hide)
+    bubble:SetScript("OnClick",function()
+        GameTooltip:Hide()
+        if extra.themeInput then extra.themeInput:ClearFocus() end
+        help:Show()
+    end)
+    help:Hide()
+end
+
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
     window:SetSize(465, 564+skins.footerPadding)
@@ -519,6 +581,7 @@ local function build()
     window:EnableMouse(true)
     window:SetScript("OnHide",function(self)
         self:StopMovingOrSizing()
+        if extra.help then extra.help:Hide() end
         if extra.isMinimized then
             if extra.themeInput then extra.themeInput:ClearFocus() end
             return
@@ -551,7 +614,9 @@ local function build()
     logo:SetSize(34,34)
     logo:SetPoint("LEFT",12,0)
     logo:SetTexture(assetPath.."BootsyMinimap.tga")
-    brand=label(windowHeader,"STRUT YOUR BOOTSY",16,54,-9,gold)
+    brand=label(windowHeader,"STRUT YOUR BOOTSY",16,54,-9,gold,183)
+    brand:SetWordWrap(false)
+    brand:SetMaxLines(1)
     badge=label(windowHeader,"",10,54,-31,muted,175)
     badge:SetMaxLines(1)
     for i,phase in ipairs({"Setup / Lobby","Preparation","Runway","Voting","Results"}) do
@@ -694,6 +759,7 @@ local function build()
     end)
     minimize:SetScript("OnLeave",GameTooltip_Hide)
     extra.buildMiniBar()
+    extra.buildHelp()
     votePanel=panel(-265,150,palette.panel,palette.outline)
     for i=1,5 do
         local row=panel(-5-(i-1)*28,27,palette.window,palette.outline,votePanel,5,407)
