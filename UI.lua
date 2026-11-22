@@ -295,11 +295,12 @@ local function refreshPreparationClock()
 end
 
 local function buildThemeAndPreviewControls()
-    extra.viewButton=button(windowHeader,"View as",78,225,-12,function()
+    extra.viewButton=button(windowHeader,"View as",98,277,-28,function()
         if extra.previewName then extra.previewName,extra.viewPicker=nil,nil
         else extra.viewPicker=not extra.viewPicker end
         UI.Refresh()
     end)
+    extra.viewButton:SetHeight(20)
     extra.themeButton=button(overview,"Theme...",113,291,-66,openTheme)
     extra.timerButton=button(overview,"Runway timer",114,168,-66,function()
         extra.timerSetup=true
@@ -650,7 +651,8 @@ local function build()
         entry[1]:ClearAllPoints()
         entry[1]:SetPoint("TOPLEFT",window,"BOTTOMLEFT",entry[2],48)
     end
-    prefsLink=button(windowHeader,"Options",72,305,-12,openPreferences)
+    prefsLink=button(windowHeader,"Options",98,277,-5,openPreferences)
+    prefsLink:SetHeight(20)
     buildThemeAndPreviewControls()
     buildEmoteDrawer()
     local close=button(windowHeader,"",25,380,-5,function() window:Hide() end)
