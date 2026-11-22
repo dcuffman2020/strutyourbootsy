@@ -4,6 +4,7 @@ local frame = CreateFrame("Frame")
 local state, developmentState, network
 local roleRequest, notice
 local practice, practiceCounter
+local raidCustomTheme
 local practiceVoter="Cinderstep"
 local unpack=unpack or table.unpack
 local sequence = 0
@@ -49,6 +50,7 @@ end
 
 local function onNetworkEvent(event, data)
     if event == "session_started" then
+        raidCustomTheme=nil
         state = Core.New(data.leader, 1)
         notice = nil
     elseif event == "authority_changed" then
@@ -98,7 +100,7 @@ local function setupNetwork()
             local ok, result = pcall(C_ChatInfo.SendAddonMessage, prefix, message, channel, target)
             return ok and result == Enum.SendAddonMessageResult.Success
         end,
-    }, { onEvent=onNetworkEvent, onCommand=onNetworkCommand, chooseTheme=chooseAlphaTheme })
+    }, { onEvent=onNetworkEvent, onCommand=onNetworkCommand, chooseTheme=function() return raidCustomTheme or chooseAlphaTheme() end })
     local ok, reason = candidate:Register()
     if not ok then say("Raid communications unavailable: " .. reason); return false end
     network = candidate
@@ -160,8 +162,9 @@ end
 
 local function nextPracticePreparation()
     local c, cfg = practice.contest, practice.settings
-    local theme = cfg.theme
-    if theme == "Random" then
+    local theme = cfg.customTheme
+    if not theme and cfg.theme ~= "Random" then theme=cfg.theme end
+    if not theme then
         local choices = practice.themePool
         if #choices == 0 then
             for i, v in ipairs(alphaThemes) do choices[i]=v end
@@ -174,7 +177,9 @@ end
 
 local function practiceView()
     local c = practice.contest
-    local result
+    local result,turn
+    turn=Core.RunwayStatus(c)
+    if turn and c.phase=="runway" then turn.endsAt=practice.turnEndsAt end
     if c.phase == "round_results" then
         result={}
         for _,name in ipairs(c.order) do
@@ -187,9 +192,9 @@ local function practiceView()
     end
     return {practice=true,isLeader=true,sessionId=practice.id,phase=c.phase,round=c.round,rounds=c.rounds,
         contestants=#demoNames,spectators=0,pendingResponses=0,members=practice.members,
-        lobbyState="ready_to_start",discoveryComplete=true,preparation=practice.preparation,
-        runway=Core.RunwayStatus(c),runwayOrder=c.order,notice=notice,wizard=practice.wizard,
-        settings=practice.wizardDraft or practice.settings,ballot=practice.ballot,ballotSubmitted=practice.ballotSubmitted,
+        lobbyState="ready_to_start",discoveryComplete=true,preparation=practice.preparation,prepLimit=practice.settings.prep,
+        runway=turn,runwaySeconds=practice.runwaySeconds,runwayOrder=c.order,notice=notice,wizard=practice.wizard,
+        settings=practice.wizardDraft or practice.settings,customTheme=(practice.wizardDraft or practice.settings).customTheme,ballot=practice.ballot,ballotSubmitted=practice.ballotSubmitted,
         voteEndsAt=practice.voteEndsAt,result=result,reveal=practice.reveal,revealCount=practice.revealCount,
         practiceVoter=practiceVoter,practicePaused=c.phase=="paused"}
 end
@@ -205,7 +210,7 @@ local function enterPractice()
             members[#members+1]={name=name,guid=name,presence="addon_ready",role="contestant"}
         end
         practice={id="practice-"..practiceCounter,contest=c,members=members,ballot={},themePool={},
-            settings={rounds=1,theme="Random",prep=120,vote=60}}
+            settings={rounds=1,theme="Random",prep=120,vote=60},runwaySeconds=Network.RUNWAY_SECONDS}
     end
     notice=nil
     UI.Show()
@@ -221,7 +226,7 @@ local function practiceAction(action, argument, value)
     if not practice or grouped() then return false,"practice_solo_only" end
     local c,cfg=practice.contest,practice.settings
     if action=="SETUP" and c.phase=="registration" then
-        practice.wizard,practice.wizardDraft=1,{rounds=cfg.rounds,theme=cfg.theme,prep=cfg.prep,vote=cfg.vote}
+        practice.wizard,practice.wizardDraft=1,{rounds=cfg.rounds,theme=cfg.theme,customTheme=cfg.customTheme,prep=cfg.prep,vote=cfg.vote}
         return true
     end
     if practice.wizard then
@@ -239,6 +244,7 @@ local function practiceAction(action, argument, value)
             for _,choice in ipairs(options and options[argument] or {}) do if choice==value then valid=true end end
             if not valid then return false,"invalid_setting" end
             practice.wizardDraft[argument]=value
+            if argument=="theme" then practice.wizardDraft.customTheme=nil end
         else return false,"wrong_phase" end
         return true
     end
@@ -253,11 +259,24 @@ local function practiceAction(action, argument, value)
     end
     if action=="BEGIN_RUNWAY" then
         if not practice.preparation or GetServerTime()<practice.preparation.endsAt then return false,"preparation_running" end
-        return Core.BeginRunway(c)
+        local ok,reason=Core.BeginRunway(c)
+        if ok then practice.turnEndsAt=GetServerTime()+practice.runwaySeconds end
+        return ok,reason
     end
-    if action=="ADVANCE" then return Core.AdvanceRunway(c) end
-    if action=="PAUSE" and c.phase=="runway" then return Core.Pause(c) end
-    if action=="RESUME" and c.phase=="paused" then return Core.Resume(c) end
+    if action=="ADVANCE" then
+        local ok,reason=Core.AdvanceRunway(c)
+        if ok and c.phase=="runway" then practice.turnEndsAt=GetServerTime()+practice.runwaySeconds end
+        return ok,reason
+    end
+    if action=="PAUSE" and c.phase=="runway" then
+        practice.turnRemaining=math.max(0,practice.turnEndsAt-GetServerTime())
+        return Core.Pause(c)
+    end
+    if action=="RESUME" and c.phase=="paused" then
+        local ok,reason=Core.Resume(c)
+        if ok then practice.turnEndsAt=GetServerTime()+practice.turnRemaining end
+        return ok,reason
+    end
     if action=="VOTING" then
         local ok,reason=Core.BeginVoting(c)
         if not ok then return false,reason end
@@ -315,6 +334,7 @@ local function view()
         local ready, reason = Core.CanStart(state, p.pendingResponses + p.presence.unknown)
         if not ready then p.lobbyState = reason end
     end
+    if p.isLeader and p.phase=="registration" then p.customTheme=raidCustomTheme; p.runwaySeconds=network.runwaySeconds end
     if p.isLeader and state and p.runway then p.runwayOrder = state.order end
     p.notice = notice
     if not p.localRole and pending and pending.status == "pending" then
@@ -323,6 +343,45 @@ local function view()
         p.timedOut = not p.awaiting
     end
     return p
+end
+
+local function setRunwaySeconds(seconds)
+    if not Network.ValidRunwaySeconds(seconds) then return false,"invalid_setting" end
+    if practice then
+        if grouped() or practice.contest.phase~="registration" then return false,"wrong_phase" end
+        practice.runwaySeconds=seconds
+        return true
+    end
+    if not network then return false,"not_registered" end
+    network:RefreshRoster()
+    local p=network:GetProjection()
+    if not p.isLeader or p.phase~="registration" or network.originalLeader~=network.leader then
+        return false,"not_raid_leader"
+    end
+    network.runwaySeconds=seconds
+    return true
+end
+
+local function setCustomTheme(text)
+    local label = text==nil and nil or Network.NormalizeCustomTheme(text)
+    if text~=nil and not label then return false,"invalid_theme" end
+    if practice then
+        if grouped() or practice.contest.phase~="registration" then return false,"wrong_phase" end
+        local settings=practice.wizardDraft or practice.settings
+        settings.customTheme=label
+        if not label then settings.theme="Random" end
+        notice=nil
+        return true
+    end
+    if not network then return false,"not_registered" end
+    network:RefreshRoster()
+    local p=network:GetProjection()
+    if not p.isLeader or p.phase~="registration" or network.originalLeader~=network.leader then
+        return false,"not_raid_leader"
+    end
+    raidCustomTheme=label
+    notice=nil
+    return true
 end
 
 local function refresh()
@@ -376,6 +435,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         UI.Initialize({
             getProjection=view, refresh=refresh, preferences=SYBCharacterDB.preferences,
             serverNow=GetServerTime, preparationSeconds=Network.PREPARATION_SECONDS,
+            normalizeTheme=Network.NormalizeCustomTheme,setCustomTheme=setCustomTheme,
+            setRunwaySeconds=setRunwaySeconds,runwayOptions=Network.RUNWAY_OPTIONS,
             groupActive=grouped, enterPractice=function() run(enterPractice) end,
             practiceAction=function(...) run(practiceAction,...) end,
             skipVote=function()

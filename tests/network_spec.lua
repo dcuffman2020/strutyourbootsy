@@ -4,6 +4,10 @@ local namespace = {}
 assert(loadfile("Network.lua"))("StrutYourBootsy", namespace)
 local Network = assert(namespace.Network)
 
+assert(Network.NormalizeCustomTheme("  Great-Guild Night  ")=="Great-Guild Night")
+assert(not Network.NormalizeCustomTheme("  "))
+assert(not Network.NormalizeCustomTheme("|cffffffffTest"))
+assert(not Network.NormalizeCustomTheme("x"..string.rep("b",48)))
 local now = 100
 local roster = {
     {name="Leader-Realm", guid="Player-1", connected=true, leader=true},
@@ -53,12 +57,12 @@ assert(member.sessionId == "session-1" and member.version == 1 and member.phase 
 assert(leader.roster["Member-Realm"].presence == "addon_pending")
 local huge, hugeReason = Network.Encode({type="HELLO", capability=string.rep("x", 255)})
 assert(huge == nil and hugeReason == "oversized_payload")
-local decoded, malformedReason = Network.Decode("t=CMD|s=3|broken")
+local decoded, malformedReason = Network.Decode("t=CMD|s=4|broken")
 assert(decoded == nil and malformedReason == "malformed_payload")
-local unknown, unknownReason = Network.Decode("t=EVIL|s=3")
+local unknown, unknownReason = Network.Decode("t=EVIL|s=4")
 assert(unknown == nil and unknownReason == "unknown_command")
 
-local old, oldReason = Network.Decode("t=HELLO|s=2|capability=raid-comms-v2")
+local old, oldReason = Network.Decode("t=HELLO|s=3|capability=raid-comms-v3")
 assert(not old and oldReason == "unsupported_client")
 assert(not leaderSent[#leaderSent].message:find("theme=", 1, true))
 
@@ -133,12 +137,13 @@ assert(not reveal({theme="Different"}))
 assert(member:GetProjection().preparation.theme == "Royalty")
 local function runway(overrides, sender)
     local msg = {type="STATE",session_id="session-1",version=5,phase="runway",
-        pos=1,total=5,cur="Player-2",nxt="Player-3"}
+        pos=1,total=5,cur="Player-2",nxt="Player-3",run_ends=1700000220}
     for k,v in pairs(overrides or {}) do msg[k]=v end
     return member:Receive(Network.PREFIX,assert(Network.Encode(msg)),"RAID",sender or "Leader-Realm")
 end
 assert(not runway({},"Quiet-Realm"))
 assert(not runway({pos=6}))
+assert(not runway({run_ends=1700099999}))
 assert(not runway({nxt="Player-2"}))
 assert(not runway({phase="runway_complete"}))
 assert(runway())

@@ -8,6 +8,7 @@ local primary, secondary, contestant, spectator, confirmPassive, skipPrep, utili
 local badge, windowHeader, overview, info, votePanel, endOfTimer, heroName, heroNext
 local phases, choices, ratingRows = {}, {}, {}
 local preferencesMode, draftPreferences
+local extra={}
 local voteDeadline, voteExpiry, voteSubmitted
 local assetPath="Interface\\AddOns\\StrutYourBootsy\\Assets\\"
 local prepLimit
@@ -44,6 +45,7 @@ local messages = {
     wrong_phase="Registration is closed.",
     minimum_five_contestants="Register at least five connected contestants.",
     registration_pending="Wait for pending addon users to confirm their roles.",
+    invalid_theme="Enter a valid theme name.",
     invalid_setting="Choose one of the listed options.",
     invalid_rating="Choose 1–5 stars for a contestant other than yourself.",
     empty_ballot="Choose at least one rating before submitting.",
@@ -143,6 +145,34 @@ local function closePreferences(save)
     UI.Refresh()
 end
 
+local function closeTheme()
+    extra.themeEditor,extra.themeFeedback=nil,nil
+    extra.themeInput:ClearFocus()
+    UI.Refresh()
+end
+
+local function useTheme(random)
+    if not extra.themeEditor or extra.previewName then return end
+    local label
+    if not random then
+        label=context.normalizeTheme(extra.themeInput:GetText())
+        if not label then return end
+    end
+    local ok,reason=context.setCustomTheme(label)
+    if ok then closeTheme()
+    else extra.themeFeedback=messages[reason] or "Could not save this theme.";UI.Refresh() end
+end
+
+local function openTheme()
+    local p=context.getProjection()
+    if extra.previewName or p.phase~="registration" or not p.isLeader then return end
+    extra.themeEditor,extra.themeFeedback=true,nil
+    extra.themeInput:SetText(p.customTheme or "")
+    UI.Refresh()
+    extra.themeInput:SetFocus()
+    extra.themeInput:HighlightText()
+end
+
 local function paintPhases(index)
     for i,p in ipairs(phases) do
         local c=i==index and gold or palette.outline
@@ -171,6 +201,29 @@ local function refreshPreparationClock()
     end
 end
 
+local function buildThemeAndPreviewControls()
+    extra.viewButton=button(windowHeader,"View as",66,238,-12,function()
+        if extra.previewName then extra.previewName,extra.viewPicker=nil,nil
+        else extra.viewPicker=not extra.viewPicker end
+        UI.Refresh()
+    end)
+    extra.themeButton=button(overview,"Theme...",92,312,-66,openTheme)
+    extra.timerButton=button(overview,"Runway timer",114,188,-66,function()
+        extra.timerSetup=true
+        UI.Refresh()
+    end)
+    extra.turnClock=label(overview,"",15,260,-12,gold,142)
+    extra.turnClock:SetJustifyH("RIGHT")
+    extra.themeInput=CreateFrame("EditBox","SYBThemeInput",info,"InputBoxTemplate")
+    extra.themeInput:SetSize(370,30)
+    extra.themeInput:SetPoint("TOPLEFT",19,-20)
+    extra.themeInput:SetAutoFocus(false)
+    extra.themeInput:SetMaxLetters(48)
+    extra.themeInput:SetScript("OnEscapePressed",closeTheme)
+    extra.themeInput:SetScript("OnEnterPressed",function() useTheme(false) end)
+    extra.themeInput:SetScript("OnTextChanged",function() if extra.themeEditor then extra.themeFeedback=nil;UI.Refresh() end end)
+end
+
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
     window:SetSize(465, 537)
@@ -186,13 +239,17 @@ local function build()
     window:SetScript("OnHide",function(self)
         self:StopMovingOrSizing()
         if preferencesMode then draftPreferences,preferencesMode=nil,nil;applyPreferences() end
+        extra.themeEditor,extra.viewPicker,extra.timerSetup=nil,nil,nil
+        if extra.themeInput then extra.themeInput:ClearFocus() end
     end)
     window:SetScript("OnUpdate", function(_, elapsed)
-        if not (prepDeadline and prepSeconds~=0) and not voteDeadline then return end
+        if not (prepDeadline and prepSeconds~=0) and not voteDeadline and not extra.turnDeadline then return end
         prepTick=prepTick+elapsed
         if prepTick<0.25 then return end
         prepTick=0
-        if voteDeadline then
+        if extra.turnDeadline then
+            UI.UpdateRunwayClock()
+        elseif voteDeadline then
             local remaining=math.max(0,voteDeadline-context.serverNow())
             if remaining==0 then UI.Refresh()
             else
@@ -255,6 +312,8 @@ local function build()
     primary = button(window, "Open registration", 152, 285, -485, function()
         local p = context.getProjection()
         if preferencesMode then closePreferences(true); return end
+        if extra.themeEditor then useTheme(false);return end
+        if extra.previewName or extra.viewPicker then return end
         if p.wizard then context.practiceAction("CONTINUE"); return end
         if p.practice then
             if p.phase=="runway_complete" then context.practiceAction("VOTING");return end
@@ -280,6 +339,9 @@ local function build()
     secondary = button(window, "Refresh", 101, 28, -485, function()
         local p=context.getProjection()
         if preferencesMode then closePreferences(false);return end
+        if extra.themeEditor then closeTheme();return end
+        if extra.timerSetup then extra.timerSetup=nil;UI.Refresh();return end
+        if extra.viewPicker or extra.previewName then extra.viewPicker,extra.previewName=nil,nil;UI.Refresh();return end
         if p.wizard then context.practiceAction("BACK");return end
         if p.practice then context.leavePractice()
         elseif p.isLeader and p.sessionId and p.phase == "registration" then context.cancel()
@@ -298,6 +360,8 @@ local function build()
     skipPrep = button(window, "Skip countdown", 140, 135, -485, function() context.skipPreparation() end)
     utility=button(window,"",140,135,-485,function()
         local p=context.getProjection()
+        if extra.themeEditor then useTheme(true);return end
+        if extra.previewName or extra.viewPicker then return end
         if preferencesMode then
             draftPreferences={scale=1,highContrast=false,reduceMotion=false,sounds=false}
             UI.Refresh()
@@ -307,6 +371,7 @@ local function build()
         else context.enterPractice() end
     end)
     prefsLink=button(windowHeader,"Options",58,310,-12,openPreferences)
+    buildThemeAndPreviewControls()
     local close=button(windowHeader,"",25,380,-12,function() window:Hide() end)
     close:SetHeight(25)
     local closeIcon=close:CreateTexture(nil,"ARTWORK")
@@ -326,7 +391,7 @@ local function build()
         for n=1,5 do
             local choice=n
             local control=button(row,"",26,233+(choice-1)*30,-2,function()
-                context.practiceAction("RATE",item.name,choice)
+                if not extra.previewName then context.practiceAction("RATE",item.name,choice) end
             end)
             control:SetHeight(23)
             control.rating=choice
@@ -434,17 +499,54 @@ local function showSettings(p)
         for _,x in ipairs(step[4]) do
             local k,val=step[3],x
             local display=type(val)=="number" and (k=="rounds" and tostring(val) or (("%d:%02d"):format(math.floor(val/60),val%60))) or val
-            local selected=cfg[k]==val
+            local selected=cfg[k]==val and not (k=="theme" and cfg.customTheme)
             opts[#opts+1]={(selected and "Selected: " or "")..display,
                 function() context.practiceAction("SETTING",k,val) end, selected}
         end
     else
-        opts={{"Rounds: "..cfg.rounds},{"Theme: "..cfg.theme},{"Preparation: "..cfg.prep.." seconds"},{"Voting: "..cfg.vote.." seconds"}}
+        opts={{"Rounds: "..cfg.rounds},{"Theme: "..(cfg.customTheme or cfg.theme)},{"Preparation: "..cfg.prep.." seconds"},{"Voting: "..cfg.vote.." seconds"}}
     end
     optionRows(opts)
     actionLabel(secondary,w==1 and "Cancel" or "Back")
     actionLabel(primary,w==5 and "Return to lobby" or "Continue")
+    if w==2 then
+        actionLabel(extra.themeButton,"Custom theme")
+        return cfg.customTheme and ("Custom theme: "..cfg.customTheme) or "Choose a theme or enter a custom name."
+    end
     return "Practice setup only. Raid settings are unchanged."
+end
+
+local function clockText(seconds)
+    return ("%d:%02d"):format(math.floor(seconds/60),seconds%60)
+end
+
+function UI.UpdateRunwayClock()
+    if not extra.turnDeadline then return end
+    local left=math.max(0,extra.turnDeadline-context.serverNow())
+    extra.turnClock:SetText(left>0 and ("Turn "..clockText(left)) or "Time’s up")
+    if left==0 then extra.turnDeadline=nil end
+end
+
+local function showRunwayTimer(p)
+    title:SetText("Runway timer")
+    summary:SetText("Time per contestant\nStarts when the raid leader begins the runway or advances a turn.")
+    details:SetText("")
+    roleHint:SetText("")
+    local options={}
+    for _,x in ipairs(context.runwayOptions) do
+        local seconds=x
+        local selected=p.runwaySeconds==seconds
+        options[#options+1]={(selected and "Selected: " or "")..clockText(seconds),
+            function()
+                local ok=context.setRunwaySeconds(seconds)
+                if ok then extra.timerSetup=nil end
+                UI.Refresh()
+            end,selected}
+    end
+    optionRows(options)
+    actionLabel(secondary,"Back")
+    primary:Hide()
+    return "Time running out does not advance the runway."
 end
 
 local function showPreferences()
@@ -482,7 +584,8 @@ local function showBallot(p)
     voteDeadline=not closed and p.voteEndsAt or nil
     voteSubmitted=p.ballotSubmitted
     title:SetText(closed and "Voting has closed" or voteSubmitted and "Ballot submitted" or "Judge contestants")
-    summary:SetText("Round "..p.round.." of "..p.rounds.." · Practice voting\nSample ballot as "..p.practiceVoter..".")
+    summary:SetText("Round "..p.round.." of "..p.rounds.." · Practice voting\n"..
+        (p.preview and ("Viewing "..p.practiceVoter.."’s ballot.") or ("Sample ballot as "..p.practiceVoter..".")))
     endOfTimer:SetText(("%d:%02d"):format(math.floor(remaining/60),remaining%60))
     info:Hide()
     votePanel:Show()
@@ -496,12 +599,16 @@ local function showBallot(p)
             control.ratedName=row.name
             control.starTexture:SetTexture(assetPath..(n<=rating and "ArmoryStarOn.tga" or "ArmoryStarOff.tga"))
             control:SetShown(row.name~=p.practiceVoter)
-            control:SetEnabled(not (closed or voteSubmitted))
+            control:SetEnabled(not (closed or voteSubmitted or p.preview))
             decorate(control,n<=rating and palette.selected or palette.panel,n<=rating and gold or palette.outline)
         end
     end
     actionLabel(primary,closed and "View round results" or "Submit ballot",closed or edits and not voteSubmitted)
     actionLabel(utility,"Skip vote timer",not closed)
+    if p.preview then
+        primary:Hide();utility:Hide()
+        return "Read-only preview. Return to host view to continue the walkthrough."
+    end
     if closed then return "Voting is closed. Only submitted ratings will count." end
     if voteSubmitted then return "Ballot locked. Voting stays open until the timer ends." end
     return "Partial ballots are allowed. Select 1–5 stars; click again to clear."
@@ -539,6 +646,17 @@ end
 function UI.Refresh()
     if not window or not window:IsShown() then return end
     local p = context.getProjection()
+    if p.phase~="registration" then extra.timerSetup=nil end
+    if not p.practice or extra.previewSession and extra.previewSession~=p.sessionId then
+        extra.previewName,extra.viewPicker,extra.previewSession=nil,nil,nil
+    end
+    if p.phase~="registration" and extra.themeEditor then extra.themeEditor=nil;extra.themeInput:ClearFocus() end
+    if extra.previewName and p.practice then
+        p.preview,p.isLeader,p.localRole=true,false,"contestant"
+        p.practiceVoter,p.ballot,p.ballotSubmitted=extra.previewName,{},false
+        p.wizard,p.customTheme,p.settings=nil,nil,nil
+        if p.phase~="voting" then p.runwayOrder=nil end
+    end
     if sessionId ~= p.sessionId then
         sessionId, selectedRole, selectedObserver = p.sessionId, nil, nil
         list:SetVerticalScroll(0)
@@ -553,6 +671,14 @@ function UI.Refresh()
     info:Show()
     votePanel:Hide()
     utility:Hide()
+    extra.themeButton:Hide()
+    extra.timerButton:Hide()
+    extra.turnDeadline=nil
+    extra.turnClock:SetText("")
+    extra.themeInput:SetShown(extra.themeEditor==true)
+    extra.viewButton:SetShown(p.practice==true and not preferencesMode and not extra.themeEditor and not extra.timerSetup)
+    extra.viewButton:SetText(extra.previewName and "Host view" or "View as")
+    prefsLink:SetShown(not p.preview and not extra.themeEditor and not extra.viewPicker and not extra.timerSetup)
     endOfTimer:SetText("")
     endOfTimer:SetAlpha(1)
     heroName:SetText("")
@@ -562,7 +688,7 @@ function UI.Refresh()
     paintPhases(preferencesMode and 0 or phaseIndex or 1)
     decorate(overview,p.phase=="runway" and palette.selected or palette.panel,
         p.phase=="runway" and palette.trim or palette.outline)
-    badge:SetText(p.practice and "PRACTICE MODE  /  FICTIONAL ROSTER" or p.isLeader and "RAID LEADER CONSOLE"
+    badge:SetText(p.preview and ("CONTESTANT VIEW  /  "..extra.previewName) or p.practice and "PRACTICE MODE  /  FICTIONAL ROSTER" or p.isLeader and "RAID LEADER CONSOLE"
         or p.localRole and p.localRole:upper() or "RAID FASHION CONTEST")
     brand:SetText("STRUT YOUR BOOTSY")
     primary:SetShown(true)
@@ -570,12 +696,42 @@ function UI.Refresh()
     contestant:SetShown(chooser == true)
     spectator:SetShown(chooser == true)
     confirmPassive:SetShown(lobby == true and not p.practice)
-    skipPrep:SetShown(p.practice == true and p.phase == "preparation")
-    secondary:SetText(p.practice and "Exit practice" or lobby and "Cancel" or "Refresh")
+    skipPrep:SetShown(p.practice == true and not p.preview and p.phase == "preparation")
+    secondary:SetText(p.preview and "Host view" or p.practice and "Exit practice" or lobby and "Cancel" or "Refresh")
 
-    if preferencesMode then
+    if extra.themeEditor then
+        list:Hide();contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
+        title:SetText("Name your theme")
+        summary:SetText("Only the raid leader sees the name before Start.")
+        details:SetText("")
+        roleHint:SetText("")
+        actionLabel(primary,"Use theme",context.normalizeTheme(extra.themeInput:GetText())~=nil)
+        actionLabel(secondary,"Cancel")
+        actionLabel(utility,"Random theme")
+        prompt=extra.themeFeedback or "Up to 48 characters. Start with a letter; use letters, numbers, spaces, commas, apostrophes or hyphens."
+    elseif extra.timerSetup then
+        contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
+        prompt=showRunwayTimer(p)
+    elseif preferencesMode then
         contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
         prompt=showPreferences()
+    elseif extra.viewPicker then
+        list:Hide();contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
+        title:SetText("View as a contestant")
+        summary:SetText("Choose one of the fictional contestants.")
+        details:SetText("");roleHint:SetText("")
+        local options={}
+        for _,m in ipairs(p.members) do
+            local name=m.name
+            options[#options+1]={name,function()
+                extra.previewName,extra.previewSession,extra.viewPicker=name,p.sessionId,nil
+                UI.Refresh()
+            end}
+        end
+        optionRows(options)
+        primary:Hide()
+        actionLabel(secondary,"Back")
+        prompt="This is a read-only preview. No one else sees it."
     elseif p.wizard then
         prompt=showSettings(p)
     elseif p.practice and p.phase=="voting" then
@@ -592,6 +748,8 @@ function UI.Refresh()
     elseif lobby then
         title:SetText("Registration lobby")
         if p.practice then actionLabel(utility,"Setup") end
+        actionLabel(extra.themeButton,"Theme...")
+        if p.runwaySeconds then actionLabel(extra.timerButton,"Runway timer") end
         summary:SetText(("Contestants: %d / 5 minimum\nSpectators: %d\nPending addon responses: %d"):format(
             p.contestants, p.spectators, p.pendingResponses))
         details:SetText("Raid roster")
@@ -601,7 +759,8 @@ function UI.Refresh()
         primary:SetText("Start contest")
         primary:SetEnabled(p.lobbyState == "ready_to_start")
         prompt = p.lobbyState == "ready_to_start"
-            and (p.practice and "Five fictional contestants. No raid messages are sent."
+            and (p.customTheme and ("Theme selected, hidden until Start: "..p.customTheme)
+                or p.practice and "Five fictional contestants. No raid messages are sent."
                 or "Ready to start. The administrator does not compete or vote.")
             or (messages[p.lobbyState] or "Start is unavailable. Refresh the raid roster and check /syb status.")
     elseif chooser then
@@ -618,7 +777,8 @@ function UI.Refresh()
             "Present your outfit each round. Vote for others.")
         primary:SetText(p.timedOut and "Retry confirmation" or "Confirm role")
         primary:SetEnabled(role ~= nil and not p.localRole and not p.awaiting)
-        if p.localRole then prompt = "Registered as " .. p.localRole .. ". Awaiting the administrator."
+        if p.preview then prompt = "You’re registered as a contestant. Waiting for the raid leader."
+        elseif p.localRole then prompt = "Registered as " .. p.localRole .. ". Awaiting the administrator."
         elseif p.awaiting then prompt = "Role submitted. Waiting for the raid leader."
         elseif p.timedOut then prompt = "Confirmation timed out. Retry the same request."
         else prompt = "Select a role and confirm it." end
@@ -636,7 +796,7 @@ function UI.Refresh()
             or role == "Administrator" and "Give contestants time to get their outfits ready."
             or "Contestants are getting their outfits ready.")
         prepHost, prepBlocked = p.isLeader == true, p.runwayBlocked == true
-        prepLimit=p.settings and p.settings.prep or nil
+        prepLimit=p.prepLimit
         primary:SetText("Begin runway")
         primary:SetShown(prepHost)
         primary:SetEnabled(false)
@@ -645,10 +805,12 @@ function UI.Refresh()
     elseif p.phase == "runway" and p.runway then
         local r = p.runway
         title:SetText(("Round %d of %d: Runway"):format(p.round or 1,p.rounds or 1))
-        if p.practice then actionLabel(utility,"Pause") end
+        if p.practice and not p.preview then actionLabel(utility,"Pause") end
         summary:SetText(("Presenting  %d of %d"):format(r.index,r.total))
         heroName:SetText(r.current)
         heroNext:SetText(r.upcoming and "Up next: " .. r.upcoming or "Final presentation")
+        extra.turnDeadline=r.endsAt
+        UI.UpdateRunwayClock()
         if p.runwayOrder then
             details:SetText("Runway order")
             roleHint:SetText("")
@@ -660,7 +822,9 @@ function UI.Refresh()
             updateRoster(order,true)
         else
             details:SetText("Runway status")
-            roleHint:SetText("The raid leader advances the runway.")
+            roleHint:SetText(p.preview and (r.current==extra.previewName and "You’re presenting now." or
+                r.upcoming==extra.previewName and "You’re up next. Get ready." or "Waiting for the raid leader to advance.")
+                or "The raid leader advances the runway.")
         end
         primary:SetText(r.index==r.total and "Finish runway" or "Next contestant")
         primary:SetShown(p.isLeader == true)
@@ -687,6 +851,12 @@ function UI.Refresh()
         primary:SetEnabled(p.isLeader == true and (not p.sessionId or p.phase == "ended"))
         if context.groupActive and not context.groupActive() then actionLabel(utility,"Practice mode") end
         prompt = (registration or p.lobbyState == "late_joiner") and messages[p.lobbyState] or ""
+    end
+    if p.preview then
+        primary:Hide()
+        utility:Hide()
+        skipPrep:Hide()
+        actionLabel(secondary,"Host view")
     end
     local noticeText = p.notice and (messages[p.notice] or ("Action failed (" .. p.notice .. "). Refresh and try again."))
     actionNotice:SetText(noticeText and noticeText ~= prompt and noticeText or "")
