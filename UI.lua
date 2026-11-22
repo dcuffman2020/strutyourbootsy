@@ -545,7 +545,7 @@ function extra.addReleaseFooter()
     local author=get and get(addonName,"Author")
     if version and version~="" then parts[#parts+1]="v"..version end
     if published and published~="" then parts[#parts+1]="Published "..published end
-    parts[#parts+1]="Made by "..(author and author~="" and author or "Herukas")
+    parts[#parts+1]="Made by "..(author and author~="" and author or "CraftyMonkeyButter")
     local footer=label(window,table.concat(parts,"  ·  "),10,0,0,muted,390)
     footer:ClearAllPoints()
     footer:SetPoint("BOTTOMRIGHT",window,"BOTTOMRIGHT",-39,11)

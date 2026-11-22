@@ -278,9 +278,9 @@ solo.slash("")
 local window = solo.env.SYBAdminWindow
 assert(window:IsShown() and solo.env.UISpecialFrames[1] == "SYBAdminWindow")
 assert(window.width==465 and window.height==601)
-assert(tocMetadata.Version:match("^[%d]+%.[%d]+%.[%d]+") and tocMetadata["X-Published-Date"]:match("^%a%a%a %d%d?, %d%d%d%d$"))
-assert(tocMetadata.Author=="Herukas")
-local footerText=("v%s  ·  Published %s  ·  Made by Herukas"):format(tocMetadata.Version,tocMetadata["X-Published-Date"])
+assert(tocMetadata.Version=="0.7.0-beta.1" and tocMetadata["X-Published-Date"]:match("^%a%a%a %d%d?, %d%d%d%d$"))
+assert(tocMetadata.Author=="CraftyMonkeyButter")
+local footerText=("v%s  ·  Published %s  ·  Made by CraftyMonkeyButter"):format(tocMetadata.Version,tocMetadata["X-Published-Date"])
 local footer
 for _,item in ipairs(window.labels) do if item:GetText()==footerText then footer=item end end
 assert(footer and footer.anchor[1]=="BOTTOMRIGHT" and footer.anchor[2]==window and footer.wordWrap==false)
