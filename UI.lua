@@ -157,7 +157,6 @@ local function button(parent, text, width, x, y, handler, accent)
     control:SetPoint("TOPLEFT", x, y)
     local caption=control:CreateFontString(nil,"OVERLAY","GameFontNormal")
     skins.font(caption,13,"body")
-    skins.caption(caption,pale)
     caption:SetPoint("CENTER")
     caption:SetWidth(width-12)
     caption:SetJustifyH("CENTER")
@@ -166,18 +165,21 @@ local function button(parent, text, width, x, y, handler, accent)
     control.caption=caption
     control:SetFontString(caption)
     control:SetText(text)
-    decorate(control,accent and palette.cta or palette.tag,accent and gold or palette.outline)
-    control:SetScript("OnEnable",function()
-        skins.caption(caption,pale)
-        decorate(control,accent and palette.cta or palette.tag,accent and gold or palette.outline)
-    end)
+    local solid=accent=="themeAccent"
+    local function paintEnabled()
+        skins.caption(caption,solid and palette.window or pale)
+        decorate(control,solid and gold or (accent and palette.cta or palette.tag),
+            solid and palette.trim or (accent and gold or palette.outline))
+    end
+    paintEnabled()
+    control:SetScript("OnEnable",paintEnabled)
     control:SetScript("OnDisable",function()
         skins.caption(caption,muted)
         decorate(control,palette.panel,palette.outline)
     end)
     control:SetScript("OnClick", handler)
     control:SetScript("OnEnter",function()
-        if control:IsEnabled() then control:SetBackdropBorderColor(unpackColor(gold)) end
+        if control:IsEnabled() then control:SetBackdropBorderColor(unpackColor(solid and pale or gold)) end
     end)
     control:SetScript("OnLeave",function()
         control:SetBackdropBorderColor(unpackColor(skins.frames[control].edge))
@@ -539,7 +541,7 @@ function extra.buildHelp()
         label(card,section[2],13,14,-29,pale,389)
         top=top+height+4
     end
-    local done=button(help,"Got it",103,314,-524,function() help:Hide() end,true)
+    local done=button(help,"Got it",103,314,-524,function() help:Hide() end,"themeAccent")
     done:SetHeight(28)
 
     -- Keep Help with the other window controls. Three independently tinted

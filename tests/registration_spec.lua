@@ -287,6 +287,13 @@ end
 for _,topic in ipairs({"Strut Your Bootsy Help","Get started","Host a raid contest","Join or watch","Practice on your own","If you get stuck"}) do
     assert(topics[topic],topic.." missing from help")
 end
+local function checkHelpActionColors(client,themeRGB,inkRGB)
+    local done=assert(client.find("Got it"))
+    for i=1,3 do
+        assert(done.fill[i]==themeRGB[i]/255 and done.caption.textColor[i]==inkRGB[i]/255)
+    end
+end
+checkHelpActionColors(solo,{0xD4,0xAD,0x62},{0x0E,0x15,0x1D})
 assert(solo.click("Got it") and not help:IsShown() and window:IsShown())
 assert(clickHelp(solo))
 window:Hide()
@@ -652,6 +659,9 @@ assert(demo.click("Studio Modern"))
 assertWindowSkin(demo,23,25,30)
 assert(demo.click("Neon Circuit"))
 assertWindowSkin(demo,8,15,28)
+assert(clickHelp(demo))
+checkHelpActionColors(demo,{0x58,0xEA,0xFF},{0x08,0x0F,0x1C})
+assert(demo.click("Got it"))
 assert(demo.click("Cancel"))
 assertWindowSkin(demo,14,21,29)
 assert(saved.appearance==nil)
@@ -689,6 +699,7 @@ assert(demo.click("Options") and demo.click("Appearance: Tournament Armory") and
 assertWindowSkin(demo,16,31,39)
 checkBubbleTint(demo,0x24,0x43,0x4E)
 assert(clickHelp(demo) and demo.env.SYBHelpWindow:IsShown())
+checkHelpActionColors(demo,{0xFF,0xD5,0x8D},{0x10,0x1F,0x27})
 assert(demo.click("Got it") and not demo.env.SYBHelpWindow:IsShown())
 assertWindowSkin(demo,16,31,39)
 assert(visibleFlakes(demo)==3 and saved.appearance=="armory")
