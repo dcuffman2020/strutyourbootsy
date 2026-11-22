@@ -216,6 +216,7 @@ local function applyPreferences()
     end
     for _,f in ipairs(labels) do f[1]:SetTextColor(unpackColor(skins.ink(f[2]))) end
     if skins.paintChrome then skins.paintChrome(key,d) end
+    if extra.paintHelpBubble then extra.paintHelpBubble() end
 end
 
 local function openPreferences()
@@ -541,21 +542,28 @@ function extra.buildHelp()
     local done=button(help,"Got it",103,314,-524,function() help:Hide() end,true)
     done:SetHeight(28)
 
-    local bubble=CreateFrame("Button",nil,windowHeader)
-    bubble:SetPoint("TOPLEFT",242,-7)
-    bubble:SetSize(26,26)
-    local circle=bubble:CreateTexture(nil,"ARTWORK")
-    circle:SetAllPoints()
-    circle:SetTexture(assetPath.."HelpBubble.tga")
-    local mark=label(bubble,"?",15,0,0,gold)
-    mark:ClearAllPoints()
-    mark:SetPoint("CENTER",bubble,"CENTER",0,2)
-    bubble:SetFontString(mark)
-    bubble:SetText("?")
-    local highlight=bubble:CreateTexture(nil,"HIGHLIGHT")
-    highlight:SetAllPoints()
-    highlight:SetTexture(assetPath.."HelpBubble.tga")
-    highlight:SetAlpha(.35)
+    -- Keep Help with the other window controls. Three independently tinted
+    -- alpha masks let the background, border, and mark follow the active skin.
+    local bubble=CreateFrame("Button","SYBHelpButton",windowHeader)
+    bubble:SetPoint("TOPLEFT",351,-5)
+    bubble:SetSize(25,20)
+    local masks={}
+    for i,layer in ipairs({"BACKGROUND","BORDER","ARTWORK","HIGHLIGHT"}) do
+        local t=bubble:CreateTexture(nil,layer)
+        local cell=i==4 and 2 or i
+        t:SetSize(20,20)
+        t:SetPoint("CENTER",bubble,"CENTER",0,0)
+        t:SetTexture(assetPath.."HelpBubble.tga")
+        t:SetTexCoord((cell-1)/4,cell/4,0,1)
+        masks[i]=t
+    end
+    extra.paintHelpBubble=function()
+        masks[1]:SetVertexColor(unpackColor(palette.tag))
+        masks[2]:SetVertexColor(unpackColor(palette.outline))
+        masks[3]:SetVertexColor(unpackColor(skins.ink(pale)))
+        masks[4]:SetVertexColor(unpackColor(gold))
+    end
+    extra.paintHelpBubble()
     bubble:SetScript("OnEnter",function(self)
         GameTooltip:SetOwner(self,"ANCHOR_TOP")
         GameTooltip:SetText("How to play")
@@ -734,7 +742,7 @@ local function build()
         entry[1]:ClearAllPoints()
         entry[1]:SetPoint("TOPLEFT",window,"BOTTOMLEFT",entry[2],48+skins.footerPadding)
     end
-    prefsLink=button(windowHeader,"Options",98,277,-5,openPreferences)
+    prefsLink=button(windowHeader,"Options",70,277,-5,openPreferences)
     prefsLink:SetHeight(20)
     buildThemeAndPreviewControls()
     buildEmoteDrawer()

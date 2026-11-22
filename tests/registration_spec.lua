@@ -55,6 +55,7 @@ function methods:StopMovingOrSizing() self.moving = false end
 local function widget(parent)
     return setmetatable({scripts={}, events={}, parent=parent, shown=true, enabled=true}, widgets)
 end
+function methods:SetVertexColor(...) self.tint={...} end
 function methods:SetTexture(path) self.texture=path end
 function methods:CreateTexture()
     local tex=widget(self)
@@ -256,11 +257,27 @@ for _,item in ipairs(window.labels) do if item:GetText()==footerText then footer
 assert(footer and footer.anchor[1]=="BOTTOMRIGHT" and footer.anchor[2]==window and footer.wordWrap==false)
 assert(footer.anchor[3]=="BOTTOMRIGHT" and footer.anchor[4]==-39 and footer.anchor[5]==11)
 local header=assert(solo.find("−")).parent
-local bubble=assert(solo.find("?"))
+local bubble=solo.env.SYBHelpButton
+local function clickHelp(client)
+    local control=client.env.SYBHelpButton
+    assert(control:IsShown() and control.scripts.OnClick)
+    control.scripts.OnClick(control)
+    return true
+end
+local function checkBubbleTint(client,r,g,b)
+    local fill=client.env.SYBHelpButton.textures[1].tint
+    assert(fill[1]==r/255 and fill[2]==g/255 and fill[3]==b/255)
+end
 local help=solo.env.SYBHelpWindow
-assert(bubble.parent==header and bubble.anchor[2]+bubble.width<assert(solo.find("Options")).anchor[2])
+local opts=assert(solo.find("Options"))
+assert(bubble.parent==header and opts.anchor[2]+opts.width<bubble.anchor[2])
+assert(bubble.anchor[2]+bubble.width<380 and bubble.anchor[3]==opts.anchor[3] and bubble.height==opts.height)
+for i,t in ipairs(bubble.textures) do
+    assert(t.anchor[1]=="CENTER" and t.anchor[2]==bubble and t.anchor[4]==0 and t.anchor[5]==0)
+end
+checkBubbleTint(solo,0x22,0x2F,0x3C)
 assert(help.parent==window and help.level>window:GetFrameLevel() and help.mouse==true and not help:IsShown())
-assert(solo.click("?") and help:IsShown())
+assert(clickHelp(solo) and help:IsShown())
 local topics={}
 for _,frame in ipairs(solo.frames) do
     if frame.parent==help then
@@ -271,7 +288,7 @@ for _,topic in ipairs({"Strut Your Bootsy Help","Get started","Host a raid conte
     assert(topics[topic],topic.." missing from help")
 end
 assert(solo.click("Got it") and not help:IsShown() and window:IsShown())
-assert(solo.click("?"))
+assert(clickHelp(solo))
 window:Hide()
 assert(not help:IsShown())
 solo.slash("")
@@ -611,7 +628,7 @@ assertActivePhase(demo,"Setup / Lobby")
 local settingsButton=assert(demo.find("Options"))
 local viewButton=assert(demo.find("View as"))
 local minimizeButton=assert(demo.find("−"))
-assert(settingsButton.width==98 and settingsButton.caption.width==86)
+assert(settingsButton.width==70 and settingsButton.caption.width==58)
 assert(settingsButton.anchor[2]+settingsButton.width<minimizeButton.anchor[2])
 assert(settingsButton.anchor[3]-settingsButton.height>viewButton.anchor[3])
 
@@ -670,12 +687,14 @@ end
 assert(visibleFlakes(demo)==0)
 assert(demo.click("Options") and demo.click("Appearance: Tournament Armory") and demo.click("Snowglow Lodge"))
 assertWindowSkin(demo,16,31,39)
-assert(demo.click("?") and demo.env.SYBHelpWindow:IsShown())
+checkBubbleTint(demo,0x24,0x43,0x4E)
+assert(clickHelp(demo) and demo.env.SYBHelpWindow:IsShown())
 assert(demo.click("Got it") and not demo.env.SYBHelpWindow:IsShown())
 assertWindowSkin(demo,16,31,39)
 assert(visibleFlakes(demo)==3 and saved.appearance=="armory")
 assert(demo.find("✓  Snowglow Lodge") and demo.click("Cancel"))
 assert(visibleFlakes(demo)==0)
+checkBubbleTint(demo,0x22,0x2F,0x3C)
 assert(demo.click("Appearance: Tournament Armory") and demo.click("Snowglow Lodge") and demo.click("Apply theme"))
 assert(saved.appearance=="snowglow" and saved.highContrast==true)
 assert(demo.click("Cancel") and visibleFlakes(demo)==3)
