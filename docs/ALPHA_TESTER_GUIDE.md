@@ -25,7 +25,7 @@ Use this same version on the raid leader and five confirmed contestants. Schema 
 
 ## Raid Warnings
 
-This is a change from the PRD’s ordinary raid-chat channel. The live host sends one Raid Warning when registration opens or is cancelled, preparation opens (with the revealed theme), the runway begins, and the runway ends. Individual turns, timer ticks, reconnects, and UI refreshes are silent. Practice previews these with a banner marked [Practice] and the game’s raid warning sound. It also previews voting opening and closing, round leaders, and the final congratulations after the last podium reveal.
+This is a change from the PRD’s ordinary raid-chat channel. The live host sends one Raid Warning when registration opens or is cancelled, preparation opens (with the revealed theme), each contestant starts presenting, and the runway ends. The first contestant’s warning also announces that the runway has begun. Timer ticks, reconnects, and UI refreshes are silent. Practice previews these with a banner marked [Practice] and the game’s raid warning sound. It also previews voting opening and closing, round leaders, and the final congratulations after the last podium reveal.
 
 Live ballots and scoring are still out of scope for this alpha. After the live runway ends, the raid leader can announce an externally determined podium once with `/syb announce winners First Second Third`. Enter the three actual contestant names in finish order, with `-Realm` for ambiguous names. Only names from the completed runway are accepted. The warning reads “Congratulations to First Second Third!” Check the feature with an opted-in test raid; automated tests use mock chat, not the Retail client.
 

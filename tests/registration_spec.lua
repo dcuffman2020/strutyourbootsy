@@ -453,7 +453,7 @@ leader.event("GROUP_ROSTER_UPDATE")
 for i=2,6 do assert(not group[i].click("Begin runway")) end
 group[6].missReveal = false
 assert(leader.click("Begin runway")); deliver()
-assert(leader.warnings[3]=="Strut Your Bootsy: The runway has begun.")
+assert(leader.warnings[3]=="Strut Your Bootsy: The runway has begun. Now presenting (1/5): Player3-Realm.")
 for _,member in ipairs(group) do assertLabel(member,"Turn 1:00") end
 advance(60)
 for _,member in ipairs(group) do
@@ -492,7 +492,10 @@ for j,name in ipairs(order) do
         group[6].missReveal=true -- miss this turn update; recover via refresh below.
     end
     assert(leader.click(j==5 and "Finish runway" or "Next contestant")); deliver()
-    assert(#leader.warnings==(j==5 and 4 or 3))
+    assert(#leader.warnings==3+j)
+    if order[j+1] then
+        assert(leader.warnings[3+j]==("Strut Your Bootsy: Now presenting (%d/5): %s."):format(j+1,order[j+1]))
+    end
     if j==1 then
         assert(not group[3].click("Emotes +") and not group[3].click("Chicken"))
         assertLabel(group[6],"Presenting  1 of 5")
@@ -513,19 +516,19 @@ leader.slash("practice")
 assert(leader.chat[#leader.chat]:find("Leave your party or raid",1,true))
 
 -- Exercise the public solo launcher and five-step loop. No raid packets may leave.
-assert(leader.warnings[4]=="Strut Your Bootsy: The runway is complete.")
+assert(leader.warnings[8]=="Strut Your Bootsy: The runway is complete.")
 group[2].slash("announce winners Player3 Player4 Player5")
 assert(#group[2].warnings==0)
 leader.slash("announce winners Player3 Player3 Player5")
 leader.slash("announce winners Player3 Player9 Player5")
-assert(#leader.warnings==4)
+assert(#leader.warnings==8)
 leader.blockWarning=true
 leader.slash("announce winners Player3 Player4 Player5")
-assert(#leader.warnings==4)
+assert(#leader.warnings==8)
 leader.blockWarning=false
 leader.slash("announce winners Player3 Player4 Player5")
 leader.slash("announce winners Player4 Player3 Player5")
-assert(#leader.warnings==5 and leader.warnings[5]=="Congratulations to Player3-Realm Player4-Realm Player5-Realm!")
+assert(#leader.warnings==9 and leader.warnings[9]=="Congratulations to Player3-Realm Player4-Realm Player5-Realm!")
 roster, clients, packets = {}, {}, {}
 local demo = makeClient()
 demo.event("PLAYER_LOGIN")
@@ -588,6 +591,9 @@ assert(not demo.click("Begin runway"))
 assert(demo.click("Skip countdown") and demo.click("Begin runway"))
 for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cinderstep"}) do
     assertLabel(demo,"Round 1 of 2: Runway")
+    local currentWarning=("[Practice] %sNow presenting (%d/5): %s."):format(
+        j==1 and "The runway has begun. " or "",j,name)
+    assert(demo.banners[#demo.banners]==currentWarning)
     assertActivePhase(demo,"Runway")
     if j==1 then
         assertLabel(demo,"Turn 2:00")
@@ -614,10 +620,12 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         local w=demo.env.SYBAdminWindow
         w.scripts.OnUpdate(w,15)
         assertLabel(demo,"Turn 1:45")
+        local warningsBeforePause=#demo.banners
         assert(demo.click("Pause"));assertLabel(demo,"Runway paused")
         assert(not demo.click("Next contestant"))
         now=now+30
         assert(demo.click("Resume runway"));assertLabel(demo,"Presenting  1 of 5")
+        assert(#demo.banners==warningsBeforePause)
         assertLabel(demo,"Turn 1:45")
     elseif j==2 then
         demo.reverseEmoteDraw=true
@@ -676,7 +684,7 @@ local localWarnings=0
 for _,line in ipairs(demo.chat) do
     if line:find("[Practice Raid Warning]",1,true) then localWarnings=localWarnings+1 end
 end
-assert(localWarnings==12 and #demo.warnings==0)
+assert(localWarnings==20 and #demo.warnings==0)
 assert(#demo.banners==localWarnings and #demo.sounds==localWarnings)
 assert(demo.banners[1]=="[Practice] Registration is open. Use /syb to join.")
 assert(demo.banners[#demo.banners]=="[Practice] Congratulations to Valeweaver Mossmantle Copperwink!")

@@ -45,6 +45,14 @@ local function phaseWarning(key, text)
     if not ok and reason=="warning_unavailable" then say("Raid Warning unavailable: "..text) end
 end
 
+local function presenterWarning(contest, opening)
+    local turn=Core.RunwayStatus(contest)
+    if not turn or not turn.current then return end
+    return ("turn_%d_%d"):format(contest.round,turn.index),
+        (opening and "The runway has begun. " or "")..
+        ("Now presenting (%d/%d): %s."):format(turn.index,turn.total,turn.current)
+end
+
 local function winnerWarning(names)
     return "Congratulations to "..table.concat(names," ").."!"
 end
@@ -380,10 +388,13 @@ local function runPracticeAction(action,...)
     local c=practice.contest
     if action=="START" or action=="NEXT_ROUND" then
         practiceWarning(("Round %d preparation is open. Theme: %s."):format(c.round,practice.preparation.theme))
-    elseif action=="BEGIN_RUNWAY" then
-        practiceWarning(("Round %d runway has begun."):format(c.round))
-    elseif action=="ADVANCE" and c.phase=="runway_complete" then
-        practiceWarning(("Round %d runway is complete."):format(c.round))
+    elseif action=="BEGIN_RUNWAY" or action=="ADVANCE" then
+        if c.phase=="runway_complete" then
+            practiceWarning(("Round %d runway is complete."):format(c.round))
+        else
+            local _,message=presenterWarning(c,action=="BEGIN_RUNWAY")
+            if message then practiceWarning(message) end
+        end
     elseif action=="VOTING" then
         practiceWarning(("Round %d voting is open."):format(c.round))
     elseif action=="CLOSE_VOTE" then
@@ -502,10 +513,13 @@ local function adminAction(action)
     if not ok then return false,reason end
     if action=="START" and network.preparation then
         phaseWarning("preparation","Preparation is open. Theme: "..network.preparation.theme..".")
-    elseif action=="BEGIN_RUNWAY" then
-        phaseWarning("runway","The runway has begun.")
-    elseif action=="ADVANCE" and network.phase=="runway_complete" then
-        phaseWarning("runway_complete","The runway is complete.")
+    elseif action=="BEGIN_RUNWAY" or action=="ADVANCE" then
+        if network.phase=="runway_complete" then
+            phaseWarning("runway_complete","The runway is complete.")
+        else
+            local key,message=presenterWarning(state,action=="BEGIN_RUNWAY")
+            if key then phaseWarning(key,message) end
+        end
     end
     local id, version = network.sessionId, network.version
     if not network:BroadcastContest() then
