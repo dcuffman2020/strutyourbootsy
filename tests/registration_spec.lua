@@ -32,6 +32,7 @@ function methods:StopMovingOrSizing() self.moving = false end
 local function widget(parent)
     return setmetatable({scripts={}, events={}, parent=parent, shown=true, enabled=true}, widgets)
 end
+function methods:CreateTexture() return widget(self) end
 function methods:CreateFontString()
     local label = widget(self)
     self.labels = rawget(self, "labels") or {}
@@ -107,7 +108,12 @@ local function makeClient(index)
     client.slash = env.SlashCmdList.STRUTYOURBOOTSY
     client.click = function(text)
         for _, frame in ipairs(client.frames) do
-            if frame.text == text and frame.enabled == true and frame.shown == true then
+            local visible,ancestor=true,frame
+            while ancestor do
+                if ancestor.shown==false then visible=false;break end
+                ancestor=rawget(ancestor,"parent")
+            end
+            if visible and frame.text == text and frame.enabled == true then
                 frame.scripts.OnClick(frame)
                 return true
             end
@@ -166,6 +172,11 @@ icon:close()
 assert(#bytes == 18 + 64 * 64 * 4 and bytes:byte(3) == 2)
 assert(bytes:byte(13) == 64 and bytes:byte(15) == 64 and bytes:byte(17) == 32 and bytes:byte(18) == 8)
 assert(bytes:byte(22) == 0 and bytes:byte(22 + (64 * 32 + 32) * 4) > 245)
+for _,asset in ipairs({"ArmoryClose","ArmoryTrim","ArmoryStarOn","ArmoryStarOff"}) do
+    local f=assert(io.open("Assets/"..asset..".tga","rb"))
+    local b=f:read("*a");f:close()
+    assert(b:byte(3)==2 and b:byte(17)==32 and #b==18+b:byte(13)*b:byte(15)*4)
+end
 
 solo.slash("")
 local window = solo.env.SYBAdminWindow
@@ -340,7 +351,9 @@ for j,name in ipairs(order) do
     local upNext = order[j+1] and "Up next: " .. order[j+1] or "Final presentation"
     for i,member in ipairs(group) do
         assertLabel(member, "Round 1 of 1: Runway")
-        assertLabel(member, ("Presenting  %d of 5\n%s\n%s"):format(j,name,upNext))
+        assertLabel(member,("Presenting  %d of 5"):format(j))
+        assertLabel(member,name)
+        assertLabel(member,upNext)
         if i>1 then assert(not member.click("Next contestant") and not member.click("Finish runway")) end
     end
     if j==1 then
@@ -351,7 +364,8 @@ for j,name in ipairs(order) do
     end
     assert(leader.click(j==5 and "Finish runway" or "Next contestant")); deliver()
     if j==1 then
-        assertLabel(group[6], "Presenting  1 of 5\nPlayer3-Realm\nUp next: Player4-Realm")
+        assertLabel(group[6],"Presenting  1 of 5")
+        assertLabel(group[6],"Player3-Realm")
         group[6].missReveal=false
         assert(group[6].click("Refresh")); deliver()
     end
@@ -369,22 +383,69 @@ roster, clients, packets = {}, {}, {}
 local demo = makeClient()
 demo.event("PLAYER_LOGIN")
 demo.slash("practice")
-assertLabel(demo, "STRUT YOUR BOOTSY  ·  PRACTICE MODE")
+assertLabel(demo,"PRACTICE MODE  /  FICTIONAL ROSTER")
 assertLabel(demo, "Five fictional contestants. No raid messages are sent.")
+assert(demo.click("Options"))
+assertLabel(demo,"Interface preferences")
+assert(demo.click("High contrast: Off") and demo.click("Save preferences"))
+assert(demo.env.SYBCharacterDB.preferences.highContrast==true)
+assert(demo.click("Setup") and demo.click("5") and demo.click("Cancel"))
+assert(demo.click("Setup"))
+assert(demo.click("Selected: 1"))
+assertLabel(demo,"How many rounds?")
+assert(demo.click("2"))
+assert(demo.click("Continue"))
+assertLabel(demo,"Choose themes")
+assert(demo.click("Royalty"))
+assert(demo.click("Continue") and demo.click("1:00") and demo.click("Continue"))
+assert(demo.click("0:30") and demo.click("Continue") and demo.click("Return to lobby"))
 assert(demo.click("Start contest"))
-assertLabel(demo, "Time to prepare: 2:00")
+assertLabel(demo,"Round 1 of 2: Preparation")
+assertLabel(demo, "Time to prepare: 1:00")
 assert(not demo.click("Begin runway"))
 assert(demo.click("Skip countdown") and demo.click("Begin runway"))
 for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cinderstep"}) do
-    assertLabel(demo, "Round 1 of 1: Runway")
+    assertLabel(demo,"Round 1 of 2: Runway")
+    if j==1 then
+        assert(demo.click("Pause"));assertLabel(demo,"Runway paused")
+        assert(not demo.click("Next contestant"))
+        assert(demo.click("Resume runway"));assertLabel(demo,"Presenting  1 of 5")
+    end
     local found=false
     for _,f in ipairs(demo.frames) do if rawget(f,"text")==name .. "  ·  Presenting" and f.shown then found=true end end
     assert(found,"Missing exact solo presenter: " .. name)
     assert(demo.click(j==5 and "Finish runway" or "Next contestant"))
 end
 assertLabel(demo, "Runway complete")
+local function rate(name,rating)
+    for _,f in ipairs(demo.frames) do
+        if rawget(f,"ratedName")==name and rawget(f,"rating")==rating and f.shown and f.enabled then
+            f.scripts.OnClick(f)
+            return true
+        end
+    end
+    return false
+end
+for round=1,2 do
+    assert(demo.click("Begin voting"))
+    assertLabel(demo,"Judge contestants")
+    assert(not demo.click("Submit ballot") and not rate("Cinderstep",5))
+    assert(rate("Valeweaver",5) and rate("Mossmantle",4) and rate("Copperwink",3) and rate("Thistledawn",2))
+    assert(demo.click("Submit ballot"))
+    assertLabel(demo,"Ballot submitted")
+    assert(not rate("Valeweaver",4))
+    assert(demo.click("Skip vote timer") and demo.click("View round results"))
+    assertLabel(demo,"Round results")
+    if round==1 then
+        assert(demo.click("Begin round 2") and demo.click("Skip countdown") and demo.click("Begin runway"))
+        for _=1,4 do assert(demo.click("Next contestant")) end
+        assert(demo.click("Finish runway"))
+    end
+end
+assert(demo.click("Final awards") and demo.click("Next reveal") and demo.click("Next reveal") and demo.click("Next reveal"))
+assertLabel(demo,"Final awards")
 assert(demo.click("Practice again"))
-assertLabel(demo, "Registration lobby")
+assertLabel(demo,"Registration lobby")
 demo.slash("devnetstart")
 assert(demo.chat[#demo.chat]:find("Exit solo practice",1,true))
 assert(demo.click("Exit practice"))
