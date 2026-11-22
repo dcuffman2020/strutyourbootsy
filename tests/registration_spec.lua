@@ -27,6 +27,8 @@ function methods:SetWordWrap(wrap)
     self.wordWrap=wrap
 end
 function methods:SetPoint(...) self.anchor={...} end
+function methods:SetBackdropColor(...) self.fill={...} end
+function methods:SetTextColor(...) self.textColor={...} end
 function methods:SetBackdropBorderColor(...) self.border={...} end
 function methods:EnableMouse(value) self.mouse=value end
 function methods:SetEnabled(value) self.enabled = value end
@@ -242,6 +244,15 @@ local function assertLabel(client, text)
     error("Missing UI label: " .. text)
 end
 
+local function assertFill(client,label,r,g,b)
+    local row=assert(client.find(label),"Missing visible result: "..label)
+    assert(row.fill[1]==r/255 and row.fill[2]==g/255 and row.fill[3]==b/255,
+        "Incorrect result color for "..label)
+    if r>150 then
+        assert(row.caption.textColor[1]==14/255, "Metallic row text should contrast with its fill")
+    end
+end
+
 local function assertEmoteGrid(client)
     local drawer=assert(client.find("Bow")).parent
     local labels,seen,rows={},{},{}
@@ -251,13 +262,14 @@ local function assertEmoteGrid(client)
             local x,y=control.anchor[2],control.anchor[3]
             assert(name~="" and not seen[name], "Duplicate or empty emote button")
             assert(x>=0 and x+control.width<=drawer.width and -y+control.height<=drawer.height)
+            assert(x==14+((#labels)%5)*72)
             seen[name]=true
             labels[#labels+1]=name
             rows[y]=(rows[y] or 0)+1
         end
     end
-    assert(#labels==16)
-    assert(rows[-6]==5 and rows[-31]==6 and rows[-56]==5)
+    assert(#labels==20 and drawer.parent.height==200 and client.env.SYBAdminWindow.height==589)
+    assert(rows[-6]==5 and rows[-31]==5 and rows[-56]==5 and rows[-81]==5)
     assert(table.concat(labels,",",1,5)=="Bow,Wave,Dance,Flex,Chicken")
     return labels
 end
@@ -476,7 +488,7 @@ assertLabel(demo,"Interface preferences")
 assert(demo.click("High contrast: Off") and demo.click("Save preferences"))
 assert(demo.env.SYBCharacterDB.preferences.highContrast==true)
 local setup=assert(demo.find("Setup Contest"))
-assert(setup.anchor[3]==-516 and setup.caption.width==128)
+assert(setup.anchor[3]=="BOTTOMLEFT" and setup.anchor[5]==48 and setup.caption.width==128)
 assert(demo.click("Setup Contest") and demo.click("5") and demo.click("Cancel"))
 assert(demo.click("Setup Contest"))
 assert(demo.click("1"))
@@ -531,13 +543,14 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         assertLabel(demo,"You’re presenting now.")
         assert(demo.click("Emotes +"))
         local choices=assertEmoteGrid(demo)
-        assert(demo.emoteDraws==11 and #demo.emotes==0)
+        assert(demo.emoteDraws==15 and #demo.emotes==0)
         assert(demo.click(choices[6]))
         assertLabel(demo,"Practice: "..choices[6].." selected. Nothing was sent to WoW.")
         assert(#demo.emotes==0)
         assert(demo.click("Emotes −") and not demo.click("Chicken"))
+        assert(demo.env.SYBAdminWindow.height==564)
         assert(demo.click("Emotes +"))
-        assert(table.concat(choices)==table.concat(assertEmoteGrid(demo)) and demo.emoteDraws==11)
+        assert(table.concat(choices)==table.concat(assertEmoteGrid(demo)) and demo.emoteDraws==15)
         assert(demo.click("Host view") and not demo.click("Emotes +"))
         assert(demo.click("View as") and demo.click("Mossmantle"))
         assert(not demo.click("Emotes +"))
@@ -557,7 +570,7 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
     elseif j==2 then
         demo.reverseEmoteDraw=true
         assert(demo.click("View as") and demo.click("Mossmantle") and demo.click("Emotes +"))
-        assert(demo.emoteDraws==22 and assertEmoteGrid(demo)[6]=="Yawn")
+        assert(demo.emoteDraws==30 and assertEmoteGrid(demo)[6]=="Yawn")
         assert(#demo.emotes==0 and demo.click("Host view"))
     end
     local found=false
@@ -585,14 +598,28 @@ for round=1,2 do
     assert(not rate("Valeweaver",4))
     assert(demo.click("Skip vote timer") and demo.click("View round results"))
     assertLabel(demo,"Round results")
+    assertFill(demo,"1st place · Valeweaver · 5.0 / 5",224,185,90)
+    assertFill(demo,"2nd place · Mossmantle · 4.0 / 5",197,206,216)
+    assertFill(demo,"3rd place · Copperwink · 3.0 / 5",198,139,97)
+    assertFill(demo,"Cinderstep · Not rated",21,31,42)
     if round==1 then
         assert(demo.click("Begin round 2") and demo.click("Skip countdown") and demo.click("Begin runway"))
         for _=1,4 do assert(demo.click("Next contestant")) end
         assert(demo.click("Finish runway"))
     end
 end
-assert(demo.click("Final awards") and demo.click("Next reveal") and demo.click("Next reveal") and demo.click("Next reveal"))
+assert(demo.click("Final awards"))
 assertLabel(demo,"Final awards")
+assertFill(demo,"1st place · Not revealed",21,31,42)
+assertFill(demo,"2nd place · Not revealed",21,31,42)
+assertFill(demo,"3rd place · Not revealed",21,31,42)
+assert(demo.click("Next reveal"))
+assertFill(demo,"3rd place · Copperwink",198,139,97)
+assert(demo.click("Next reveal"))
+assertFill(demo,"2nd place · Mossmantle",197,206,216)
+assert(demo.click("Next reveal"))
+assertFill(demo,"1st place · Valeweaver",224,185,90)
+assertFill(demo,"Honorable mention · Thistledawn",21,31,42)
 assert(demo.click("Practice again"))
 assertLabel(demo,"Registration lobby")
 demo.slash("devnetstart")
@@ -604,4 +631,14 @@ demo.slash("practice")
 demo.inRaid=true; demo.event("GROUP_ROSTER_UPDATE")
 assertLabel(demo, "Welcome to the runway")
 assert(#packets==0)
-print("Registration, custom themes, synchronized turn timers, and contestant preview passed")
+demo.ns.UI.Initialize({getProjection=function()
+    return {practice=true,isLeader=true,sessionId="ties",phase="round_results",round=1,rounds=1,
+        result={{name="Copperwink",average=5},{name="Valeweaver",average=5},{name="Mossmantle",average=4},
+            {name="Thistledawn",average=2},{name="Cinderstep"}}}
+end})
+demo.ns.UI.Show()
+assertFill(demo,"Tied for 1st place · Copperwink · 5.0 / 5",224,185,90)
+assertFill(demo,"Tied for 1st place · Valeweaver · 5.0 / 5",224,185,90)
+assertFill(demo,"3rd place · Mossmantle · 4.0 / 5",198,139,97)
+assertFill(demo,"Cinderstep · Not rated",21,31,42)
+print("Registration, contestant preview, emote grid, and medal colors passed")

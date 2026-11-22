@@ -22,6 +22,11 @@ local gold,pale,muted=rgb(0xD4AD62),rgb(0xF4EADD),rgb(0xBCC9D5)
 local palette={window=rgb(0x0E151D),panel=rgb(0x151F2A),outline=rgb(0x435364),
     header=rgb(0x411628),cta=rgb(0x751E35),selected=rgb(0x352231),
     tag=rgb(0x222F3C),trim=rgb(0x866638),success=rgb(0xA9E7B7),info=rgb(0xC0DFFA)}
+local medals={
+    {fill=rgb(0xE0B95A),edge=rgb(0xF6D788)},
+    {fill=rgb(0xC5CED8),edge=rgb(0xE8EEF4)},
+    {fill=rgb(0xC68B61),edge=rgb(0xE8AC84)},
+}
 local labels={}
 local themeNames={"Random","Royalty","Out of This World","Back from the Dead","Heroes of Azeroth"}
 local unpackColor = unpack or table.unpack
@@ -247,7 +252,7 @@ local runwayEmotes={"Cheer","Clap","Cry","Gasp","Grin","Kneel","Laugh","Nod","Po
 local function loadRunwayEmotes()
     local pool={}
     for i,name in ipairs(runwayEmotes) do pool[i]=name end
-    for i=1,11 do
+    for i=1,15 do
         local j=math.random(i,#pool)
         pool[i],pool[j]=pool[j],pool[i]
         extra.emoteButtons[#runwayFavorites+i]:SetText(pool[i])
@@ -272,16 +277,12 @@ local function buildEmoteDrawer()
         if not extra.emoteOpen then extra.emoteFeedback=nil end
         UI.Refresh()
     end)
-    extra.emoteDrawer=panel(-68,100,palette.window,palette.trim,info,17,383)
-    extra.emoteNote=label(extra.emoteDrawer,"",11,8,-82,muted,367)
+    extra.emoteDrawer=panel(-68,125,palette.window,palette.trim,info,17,383)
+    extra.emoteNote=label(extra.emoteDrawer,"",11,8,-107,muted,367)
     extra.emoteButtons={}
-    for i=1,16 do
-        local row,column,count
-        if i<=5 then row,column,count=0,i-1,5
-        elseif i<=11 then row,column,count=1,i-6,6
-        else row,column,count=2,i-12,5 end
-        local width=count==5 and 66 or 56
-        local start=math.floor((383-(count*width+(count-1)*6))/2)
+    for i=1,20 do
+        local row,column=math.floor((i-1)/5),(i-1)%5
+        local width,start=66,14
         local control=button(extra.emoteDrawer,runwayFavorites[i] or "",width,start+column*(width+6),-6-row*25,function(self)
             if not extra.emoteDrawer:IsShown() or not extra.emoteOpen then return end
             local name=self:GetText()
@@ -312,7 +313,8 @@ local function updateEmoteDrawer(p)
     extra.emoteToggle:SetShown(key~=nil)
     extra.emoteToggle:SetText(extra.emoteOpen and "Emotes −" or "Emotes +")
     local expanded=key~=nil and extra.emoteOpen==true
-    if expanded then info:SetHeight(175) end
+    window:SetHeight(expanded and 589 or 564)
+    if expanded then info:SetHeight(200) end
     extra.emoteDrawer:SetShown(expanded)
     extra.emoteNote:SetText(extra.emoteFeedback or (p.preview and "Practice only. Emotes won’t play in WoW." or "Choose an emote to perform it."))
 end
@@ -396,14 +398,18 @@ local function build()
 
     actionNotice=label(window,"",12,25,-445,muted,415)
     status=label(window,"",13,25,-474,gold,415)
+    actionNotice:ClearAllPoints()
+    actionNotice:SetPoint("TOPLEFT",window,"BOTTOMLEFT",25,119)
+    status:ClearAllPoints()
+    status:SetPoint("TOPLEFT",window,"BOTTOMLEFT",25,90)
     local trim=window:CreateTexture(nil,"ARTWORK")
     trim:SetColorTexture(gold[1],gold[2],gold[3],.6)
     trim:SetSize(417,1)
-    trim:SetPoint("TOPLEFT",24,-504)
+    trim:SetPoint("TOPLEFT",window,"BOTTOMLEFT",24,60)
     local jewel=window:CreateTexture(nil,"OVERLAY")
     jewel:SetTexture(assetPath.."ArmoryTrim.tga")
     jewel:SetSize(20,7)
-    jewel:SetPoint("TOP",0,-501)
+    jewel:SetPoint("TOP",window,"BOTTOM",0,63)
     primary = button(window, "Open registration", 152, 285, -516, function()
         local p = context.getProjection()
         if preferencesMode then closePreferences(true); return end
@@ -465,6 +471,10 @@ local function build()
         elseif p.phase=="voting" and p.practice then context.skipVote()
         else context.enterPractice() end
     end)
+    for _,entry in ipairs({{primary,285},{secondary,28},{confirmPassive,135},{skipPrep,135},{utility,135}}) do
+        entry[1]:ClearAllPoints()
+        entry[1]:SetPoint("TOPLEFT",window,"BOTTOMLEFT",entry[2],48)
+    end
     prefsLink=button(windowHeader,"Options",58,318,-12,openPreferences)
     buildThemeAndPreviewControls()
     buildEmoteDrawer()
@@ -579,6 +589,9 @@ local function optionRows(items,customFirst)
         control:SetEnabled(true)
         control:EnableMouse(item[2]~=nil)
         paintSelection(control,item[3])
+        local medal=medals[item[4]]
+        control.caption:SetTextColor(unpackColor(medal and palette.window or pale))
+        if medal then decorate(control,medal.fill,medal.edge) end
         control:Show()
     end
 end
@@ -727,23 +740,34 @@ local function showResults(p)
     local last=p.round==p.rounds
     details:SetText("")
     roleHint:SetText("")
+    local places={"1st place","2nd place","3rd place"}
     if not p.reveal then
         title:SetText("Round results")
         summary:SetText(("Round %d of %d complete\nPractice aggregate scores"):format(p.round,p.rounds))
         local items={}
-        for _,r in ipairs(p.result) do items[#items+1]={r.name.." · "..(r.average and ("%.1f / 5"):format(r.average) or "Not rated")} end
+        local rank,previous=0,nil
+        for i,r in ipairs(p.result) do
+            local score=r.average
+            if score~=previous then rank=i end
+            local nextResult=p.result[i+1]
+            local place=score and places[rank]
+            local tied=score and (score==previous or (nextResult and nextResult.average==score))
+            local caption=(place and ((tied and "Tied for " or "")..place.." · ") or "")..r.name
+                .." · "..(score and ("%.1f / 5"):format(score) or "Not rated")
+            items[#items+1]={caption,nil,nil,place and rank or nil}
+            previous=score
+        end
         optionRows(items)
         actionLabel(primary,last and "Final awards" or ("Begin round "..(p.round+1)))
         return "Only aggregate scores are shown. No player was contacted."
     end
     title:SetText("Final awards")
     summary:SetText("Practice podium\nQualified in every round: "..#p.reveal)
-    local places={"1st place","2nd place","3rd place"}
     local max=math.min(3,#p.reveal)
     local opts={}
     for i=1,max do
         local reveal=i>max-p.revealCount
-        opts[#opts+1]={places[i].." · "..(reveal and p.reveal[i].name or "Not revealed"),nil,reveal}
+        opts[#opts+1]={places[i].." · "..(reveal and p.reveal[i].name or "Not revealed"),nil,nil,reveal and i or nil}
     end
     if p.reveal[4] and p.revealCount==max then opts[#opts+1]={"Honorable mention · "..p.reveal[4].name} end
     if max==0 then opts[1]={"No contestants received a rating in every round."} end
