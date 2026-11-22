@@ -7,6 +7,10 @@ This is a private test build. Live raid play still ends at the runway. Solo prac
 1. Fully exit WoW Retail. Extract the ZIP and copy the single `StrutYourBootsy` folder to `_retail_/Interface/AddOns/`. Keep the entire included `Assets` folder. Do not put the addon inside a second nested `StrutYourBootsy` directory.
 2. Enable the addon at character select. Use the Bootsy minimap button or type `/syb`. The minimap button drags to a new position.
 
+## Personalize the addon
+
+Open **Options → Appearance**. Select **Tournament Armory**, **Goldleaf Grimoire**, **Studio Modern**, or **Neon Circuit** to preview it immediately on the live window. The swatches identify each look; the checkmark shows what you are previewing. **Apply theme** saves this character’s appearance and returns to Options. **Cancel** or closing the window discards an unapplied preview. Appearance is client-only and separate from the contest theme. High contrast and other interface settings still work with every skin.
+
 ## Test solo (no group needed)
 
 1. While outside a party or raid, type **`/syb practice`**. The window is marked **Practice mode**, with five fictional contestants ready in the lobby.

@@ -28,6 +28,55 @@ local medals={
     {fill=muted,edge=palette.outline,ink=palette.window},
     {fill=palette.trim,edge=gold,ink={1,1,1}},
 }
+-- Semantic roles are updated in place so existing controls repaint without being rebuilt.
+local skins={
+    order={"armory","goldleaf","modern","neon"}, frames={}, type={}, swatches={}, names={
+        armory="Tournament Armory", goldleaf="Goldleaf Grimoire", modern="Studio Modern", neon="Neon Circuit",
+    },
+    defs={
+        armory={window=0x0E151D,panel=0x151F2A,outline=0x435364,header=0x411628,cta=0x751E35,
+            selected=0x352231,tag=0x222F3C,trim=0x866638,success=0xA9E7B7,info=0xC0DFFA,
+            gold=0xD4AD62,pale=0xF4EADD,muted=0xBCC9D5},
+        goldleaf={window=0x1B100D,panel=0x2A1817,outline=0x896143,header=0x461E25,cta=0x254E36,
+            selected=0x533129,tag=0x3B2020,trim=0x8A613C,success=0xC6E4AA,info=0xEED8A5,
+            gold=0xE6BF77,pale=0xFFF0D4,muted=0xDCC2A3,display="Fonts\\MORPHEUS.TTF"},
+        modern={window=0x17191E,panel=0x212630,outline=0x556780,header=0x22252C,cta=0x244DAD,
+            selected=0x253952,tag=0x303541,trim=0x64758E,success=0x9BE3BF,info=0xB3CCFF,
+            gold=0x92B4FF,pale=0xF5F7FB,muted=0xBFCCDF,display="Fonts\\ARIALN.TTF",plain=true,medals={0xDDBA70,0xBACDE3,0x805538}},
+        neon={window=0x080F1C,panel=0x0F1B2D,outline=0x4E688B,header=0x122039,cta=0x00525E,
+            selected=0x56254E,tag=0x172541,trim=0x365377,success=0xB5FCA0,info=0xA8DFFF,
+            gold=0x58EAFF,pale=0xEDF5FF,muted=0xB2C7E8,display="Fonts\\ARIALN.TTF",plain=true,medals={0xF4BD68,0xC5D7E9,0x925D3F},hot=0xFF71C9},
+    },
+}
+skins.tokens={gold=gold,pale=pale,muted=muted}
+for k,v in pairs(palette) do skins.tokens[k]=v end
+-- Medal colors remain gold/silver/bronze even when the interaction accent is blue or cyan.
+medals[1].fill,medals[2].fill,medals[3].fill=rgb(0xD4AD62),rgb(0xBCC9D5),rgb(0x866638)
+medals[1].edge=palette.trim
+function skins.key(value) return skins.defs[value] and value or "armory" end
+function skins.setRGB(target,value)
+    local c=rgb(value)
+    target[1],target[2],target[3]=c[1],c[2],c[3]
+end
+function skins.ink(color)
+    if not skins.contrast then return color end
+    if color==gold then return {(1+gold[1])/2,(1+gold[2])/2,(1+gold[3])/2} end
+    if color==pale or color==muted or color==palette.info then return {1,1,1} end
+    return color
+end
+function skins.font(widget,size,kind)
+    local spec=skins.type[widget] or {}
+    spec[1],spec[2]=size,kind
+    skins.type[widget]=spec
+    local d=skins.defs[skins.active or "armory"]
+    local path=(kind=="display" and d.display) or (d.plain and d.display) or STANDARD_TEXT_FONT
+    -- Keep the system locale font when the alternate font is unavailable.
+    if path==STANDARD_TEXT_FONT then widget:SetFont(path,size)
+    else
+        local ok,accepted=pcall(widget.SetFont,widget,path,size)
+        if not ok or accepted==false then widget:SetFont(STANDARD_TEXT_FONT,size) end
+    end
+end
 local labels={}
 local themeNames={"Random","Royalty","Out of This World","Back from the Dead","Heroes of Azeroth"}
 local unpackColor = unpack or table.unpack
@@ -70,8 +119,8 @@ local messages = {
 local function label(parent, text, size, x, y, color, width)
     local font = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     font:SetPoint("TOPLEFT", x, y)
-    font:SetFont(STANDARD_TEXT_FONT, size)
-    font:SetTextColor(unpackColor(color or pale))
+    skins.font(font,size,size>=16 and "display" or "body")
+    font:SetTextColor(unpackColor(skins.ink(color or pale)))
     labels[#labels+1]={font,color or pale}
     font:SetText(text)
     if width then
@@ -83,10 +132,20 @@ local function label(parent, text, size, x, y, color, width)
 end
 
 local function decorate(frame, fill, edge)
-    frame:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8",
-        edgeFile="Interface\\Buttons\\WHITE8X8",edgeSize=1})
+    if not skins.frames[frame] then
+        frame:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8",
+            edgeFile="Interface\\Buttons\\WHITE8X8",edgeSize=1})
+        skins.frames[frame]={}
+    end
+    local paint=skins.frames[frame]
+    paint.fill,paint.edge=fill,edge
     frame:SetBackdropColor(fill[1],fill[2],fill[3],1)
     frame:SetBackdropBorderColor(unpackColor(edge))
+end
+
+function skins.caption(widget,color)
+    skins.type[widget].ink=color
+    widget:SetTextColor(unpackColor(skins.ink(color)))
 end
 
 local function button(parent, text, width, x, y, handler, accent)
@@ -94,8 +153,8 @@ local function button(parent, text, width, x, y, handler, accent)
     control:SetSize(width, 31)
     control:SetPoint("TOPLEFT", x, y)
     local caption=control:CreateFontString(nil,"OVERLAY","GameFontNormal")
-    caption:SetFont(STANDARD_TEXT_FONT,13)
-    caption:SetTextColor(unpackColor(pale))
+    skins.font(caption,13,"body")
+    skins.caption(caption,pale)
     caption:SetPoint("CENTER")
     caption:SetWidth(width-12)
     caption:SetJustifyH("CENTER")
@@ -106,11 +165,11 @@ local function button(parent, text, width, x, y, handler, accent)
     control:SetText(text)
     decorate(control,accent and palette.cta or palette.tag,accent and gold or palette.outline)
     control:SetScript("OnEnable",function()
-        caption:SetTextColor(unpackColor(pale))
+        skins.caption(caption,pale)
         decorate(control,accent and palette.cta or palette.tag,accent and gold or palette.outline)
     end)
     control:SetScript("OnDisable",function()
-        caption:SetTextColor(unpackColor(muted))
+        skins.caption(caption,muted)
         decorate(control,palette.panel,palette.outline)
     end)
     control:SetScript("OnClick", handler)
@@ -118,7 +177,7 @@ local function button(parent, text, width, x, y, handler, accent)
         if control:IsEnabled() then control:SetBackdropBorderColor(unpackColor(gold)) end
     end)
     control:SetScript("OnLeave",function()
-        control:SetBackdropBorderColor(unpackColor((control.selected or accent and control:IsEnabled()) and gold or palette.outline))
+        control:SetBackdropBorderColor(unpackColor(skins.frames[control].edge))
     end)
     return control
 end
@@ -139,21 +198,39 @@ end
 local function applyPreferences()
     local p=draftPreferences or context.preferences
     window:SetScale(p.scale or 1)
-    for _,f in ipairs(labels) do
-        local c=p.highContrast and (f[2]==gold and {1,.86,.55} or {1,1,1}) or f[2]
-        f[1]:SetTextColor(unpackColor(c))
+    local key=skins.key(p.appearance)
+    if key==skins.active and p.highContrast==skins.contrast then return end
+    skins.active,skins.contrast=key,p.highContrast
+    local d=skins.defs[key]
+    for k,v in pairs(skins.tokens) do skins.setRGB(v,d[k]) end
+    local fills=d.medals or {d.gold,d.muted,d.trim}
+    for i,medal in ipairs(medals) do skins.setRGB(medal.fill,fills[i]) end
+    for frame,paint in pairs(skins.frames) do decorate(frame,paint.fill,paint.edge) end
+    for widget,spec in pairs(skins.type) do
+        skins.font(widget,spec[1],spec[2])
+        if spec.ink then skins.caption(widget,spec.ink) end
     end
+    for _,f in ipairs(labels) do f[1]:SetTextColor(unpackColor(skins.ink(f[2]))) end
+    if skins.paintChrome then skins.paintChrome(key,d) end
 end
 
 local function openPreferences()
     if preferencesMode then return end
     local p=context.preferences
-    draftPreferences={scale=p.scale or 1,highContrast=p.highContrast,reduceMotion=p.reduceMotion,sounds=p.sounds}
+    draftPreferences={scale=p.scale or 1,highContrast=p.highContrast,reduceMotion=p.reduceMotion,sounds=p.sounds,
+        appearance=skins.key(p.appearance)}
     preferencesMode=true
     UI.Refresh()
 end
 
 local function closePreferences(save)
+    if preferencesMode=="appearance" then
+        if save then context.preferences.appearance=draftPreferences.appearance
+        else draftPreferences.appearance=skins.key(context.preferences.appearance) end
+        preferencesMode=true
+        UI.Refresh()
+        return
+    end
     if save then
         for _,k in ipairs({"scale","highContrast","reduceMotion","sounds"}) do context.preferences[k]=draftPreferences[k] end
     end
@@ -193,7 +270,7 @@ local function paintPhases(index)
     for i,p in ipairs(phases) do
         local c=i==index and gold or palette.outline
         decorate(p.frame,i==index and palette.selected or palette.panel,c)
-        p.caption:SetTextColor(unpackColor(i==index and pale or i<index and palette.success or muted))
+        p.caption:SetTextColor(unpackColor(skins.ink(i==index and pale or i<index and palette.success or muted)))
     end
 end
 
@@ -217,7 +294,7 @@ local function refreshPreparationClock()
 end
 
 local function buildThemeAndPreviewControls()
-    extra.viewButton=button(windowHeader,"View as",78,238,-12,function()
+    extra.viewButton=button(windowHeader,"View as",78,225,-12,function()
         if extra.previewName then extra.previewName,extra.viewPicker=nil,nil
         else extra.viewPicker=not extra.viewPicker end
         UI.Refresh()
@@ -299,7 +376,7 @@ local function buildEmoteDrawer()
             UI.Refresh()
         end)
         control:SetHeight(22)
-        control.caption:SetFont(STANDARD_TEXT_FONT,12)
+        skins.font(control.caption,12,"body")
         extra.emoteButtons[i]=control
     end
 end
@@ -317,6 +394,37 @@ local function updateEmoteDrawer(p)
     if expanded then info:SetHeight(200) end
     extra.emoteDrawer:SetShown(expanded)
     extra.emoteNote:SetText(extra.emoteFeedback or (p.preview and "Practice only. Emotes won’t play in WoW." or "Choose an emote to perform it."))
+end
+
+function skins.buildChrome(trim,jewel)
+    local leaf,bars={},{}
+    for i,anchor in ipairs({"TOPLEFT","TOPRIGHT","BOTTOMLEFT","BOTTOMRIGHT"}) do
+        local x=i%2==1 and 3 or -3
+        local y=i<=2 and -3 or 3
+        local t=window:CreateTexture(nil,"OVERLAY")
+        t:SetSize(34,34)
+        t:SetPoint(anchor,x,y)
+        t:SetTexture(assetPath.."GoldleafCorner.tga")
+        t:SetTexCoord(i%2==1 and 0 or 1,i%2==1 and 1 or 0,i<=2 and 0 or 1,i<=2 and 1 or 0)
+        leaf[i]=t
+        for axis=1,2 do
+            local b=window:CreateTexture(nil,"OVERLAY")
+            b:SetPoint(anchor,x,y)
+            b:SetSize(axis==1 and 22 or 2,axis==1 and 2 or 22)
+            bars[#bars+1]=b
+        end
+    end
+    skins.paintChrome=function(key,d)
+        trim:SetColorTexture(gold[1],gold[2],gold[3],.65)
+        jewel:SetShown(key=="armory" or key=="goldleaf")
+        for _,t in ipairs(leaf) do t:SetShown(key=="goldleaf") end
+        local hot=rgb(d.hot or d.gold)
+        for i,b in ipairs(bars) do
+            local c=(i==4 or i==5) and hot or gold
+            b:SetColorTexture(c[1],c[2],c[3],.92)
+            b:SetShown(key=="neon")
+        end
+    end
 end
 
 local function build()
@@ -410,6 +518,7 @@ local function build()
     jewel:SetTexture(assetPath.."ArmoryTrim.tga")
     jewel:SetSize(20,7)
     jewel:SetPoint("TOP",window,"BOTTOM",0,63)
+    skins.buildChrome(trim,jewel)
     primary = button(window, "Open registration", 152, 285, -516, function()
         local p = context.getProjection()
         if preferencesMode then closePreferences(true); return end
@@ -464,7 +573,8 @@ local function build()
         if extra.themeEditor then useTheme(true);return end
         if extra.previewName or extra.viewPicker then return end
         if preferencesMode then
-            draftPreferences={scale=1,highContrast=false,reduceMotion=false,sounds=false}
+            draftPreferences={scale=1,highContrast=false,reduceMotion=false,sounds=false,
+                appearance=skins.key(context.preferences.appearance)}
             UI.Refresh()
         elseif p.phase=="registration" and p.practice then context.practiceAction("SETUP")
         elseif p.phase=="runway" and p.practice then context.practiceAction("PAUSE")
@@ -475,7 +585,7 @@ local function build()
         entry[1]:ClearAllPoints()
         entry[1]:SetPoint("TOPLEFT",window,"BOTTOMLEFT",entry[2],48)
     end
-    prefsLink=button(windowHeader,"Options",58,318,-12,openPreferences)
+    prefsLink=button(windowHeader,"Options",72,305,-12,openPreferences)
     buildThemeAndPreviewControls()
     buildEmoteDrawer()
     local close=button(windowHeader,"",25,380,-12,function() window:Hide() end)
@@ -590,7 +700,7 @@ local function optionRows(items,customFirst)
         control:EnableMouse(item[2]~=nil)
         paintSelection(control,item[3])
         local medal=medals[item[4]]
-        control.caption:SetTextColor(unpackColor(medal and medal.ink or pale))
+        skins.caption(control.caption,medal and medal.ink or pale)
         if medal then decorate(control,medal.fill,medal.edge) end
         control:Show()
     end
@@ -672,6 +782,7 @@ local function showRunwayTimer(p)
 end
 
 local function showPreferences()
+    if preferencesMode=="appearance" then return skins.showAppearance() end
     title:SetText("Interface preferences")
     summary:SetText("Preferences are saved for this character.\nPreview changes before saving.")
     details:SetText("")
@@ -692,11 +803,56 @@ local function showPreferences()
         choices[#choices+1]={titleText[key]..": "..(p[key] and "On" or "Off"),
             function() p[key]=not p[key];UI.Refresh() end,p[key]}
     end
+    choices[#choices+1]={"Appearance: "..skins.names[skins.key(p.appearance)],function()
+        preferencesMode="appearance"
+        UI.Refresh()
+    end}
     optionRows(choices)
     actionLabel(primary,"Save preferences")
     actionLabel(secondary,"Cancel")
     actionLabel(utility,"Reset")
-    return "Click the scale or an option to change it."
+    return "Click an option to preview changes."
+end
+
+function skins.showAppearance()
+    title:SetText("Appearance")
+    local p=draftPreferences
+    local saved=skins.key(context.preferences.appearance)
+    summary:SetText("Choose how Strut Your Bootsy looks for you.\nPreviewing: "..skins.names[p.appearance].."  ·  Saved: "..skins.names[saved])
+    details:SetText("")
+    roleHint:SetText("")
+    local options={}
+    for _,key in ipairs(skins.order) do
+        local id=key
+        options[#options+1]={(p.appearance==id and "✓  " or "")..skins.names[id],function()
+            p.appearance=id
+            UI.Refresh()
+        end,p.appearance==id}
+    end
+    optionRows(options)
+    for i,key in ipairs(skins.order) do
+        local row=choices[i]
+        local chips=skins.swatches[row]
+        if not chips then
+            chips={}
+            skins.swatches[row]=chips
+            for n=1,2 do
+                local dot=row:CreateTexture(nil,"OVERLAY")
+                dot:SetSize(9,9)
+                dot:SetPoint("RIGHT",row,"RIGHT",-12-(n-1)*14,0)
+                chips[n]=dot
+            end
+        end
+        local d=skins.defs[key]
+        for n,dot in ipairs(chips) do
+            local c=rgb(n==1 and d.gold or d.cta)
+            dot:SetColorTexture(c[1],c[2],c[3],1)
+            dot:Show()
+        end
+    end
+    actionLabel(primary,"Apply theme",p.appearance~=saved)
+    actionLabel(secondary,"Cancel")
+    return "Appearance is saved for this character. It doesn’t change the contest theme."
 end
 
 local function showBallot(p)
@@ -800,7 +956,10 @@ function UI.Refresh()
     local prompt
     prepDeadline, prepSeconds, prepTick, prepHost, prepBlocked = nil, nil, 0, false, false
     voteDeadline,voteExpiry,voteSubmitted=nil,nil,nil
-    for _,choice in ipairs(choices) do choice:Hide() end
+    for _,choice in ipairs(choices) do
+        choice:Hide()
+        for _,chip in ipairs(skins.swatches[choice] or {}) do chip:Hide() end
+    end
     info:Show()
     info:SetHeight(150)
     votePanel:Hide()
@@ -812,7 +971,7 @@ function UI.Refresh()
     extra.themeInput:SetShown(extra.themeEditor==true)
     extra.viewButton:SetShown(p.practice==true and not preferencesMode and not extra.themeEditor and not extra.timerSetup)
     extra.viewButton:SetText(extra.previewName and "Host view" or "View as")
-    prefsLink:SetShown(not p.preview and not extra.themeEditor and not extra.viewPicker and not extra.timerSetup)
+    prefsLink:SetShown(not preferencesMode and not p.preview and not extra.themeEditor and not extra.viewPicker and not extra.timerSetup)
     endOfTimer:SetText("")
     endOfTimer:SetAlpha(1)
     heroName:SetText("")
