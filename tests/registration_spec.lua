@@ -289,11 +289,12 @@ end
 checkBubbleTint(solo,0x22,0x2F,0x3C)
 assert(help.parent==window and help.level>window:GetFrameLevel() and help.mouse==true and not help:IsShown())
 assert(clickHelp(solo) and help:IsShown())
-local topics,rules={},nil
+local topics,topicY,rules={},{},nil
 for _,frame in ipairs(solo.frames) do
     if frame.parent==help then
         local lines=rawget(frame,"labels") or {}
         for _,line in ipairs(lines) do topics[line:GetText()]=true end
+        if lines[1] then topicY[lines[1]:GetText()]=frame.anchor[3] end
         if lines[1] and lines[1]:GetText()=="Contest rules" then rules=lines[2]:GetText() end
     end
 end
@@ -306,6 +307,8 @@ for _,rule in ipairs({"Live contests must be run in a raid.","At least five cont
     assert(rules and rules:find(rule,1,true),rule.." missing from Contest rules")
 end
 assert(-solo.find("Got it").anchor[3]+solo.find("Got it").height<window.height)
+local orderedHelp={"Get started","Join or watch","Contest rules","Host a raid contest","Practice on your own","If you get stuck"}
+for i=2,#orderedHelp do assert(topicY[orderedHelp[i-1]]>topicY[orderedHelp[i]]) end
 local function checkHelpActionColors(client,themeRGB,inkRGB)
     local done=assert(client.find("Got it"))
     for i=1,3 do

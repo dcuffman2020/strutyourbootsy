@@ -552,9 +552,9 @@ function extra.buildHelp()
 
     local sections={
         {"Get started","Type /syb or click the Bootsy minimap icon. Use the minus button to tuck the window away.",60},
+        {"Join or watch","Choose Contestant or Spectator and confirm. Use Emotes during your turn if you like.",60},
         {"Contest rules","• Live contests must be run in a raid.\n• At least five contestants must register.\n• The raid leader is the contest official and cannot vote.\n• Contestants cannot vote for themselves.\nLive voting isn’t available in this alpha.",110},
         {"Host a raid contest","Open registration and set a theme and prep time. Start once roles are confirmed. After prep, advance each runway turn.",67},
-        {"Join or watch","Choose Contestant or Spectator and confirm. Use Emotes during your turn if you like.",60},
         {"Practice on your own","Outside a group, type /syb practice to try a contest and sample ballot with fictional players.",64},
         {"If you get stuck","Use Refresh to catch up. If Start contest is disabled, check the lobby message.",60},
     }
