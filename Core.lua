@@ -38,7 +38,7 @@ end
 
 function Core.CanStart(state, pendingAddonUsers)
     if state.phase ~= "registration" then return false, "wrong_phase" end
-    if countContestants(state) < 5 then return false, "minimum_five_contestants" end
+    if countContestants(state) < (state.minContestants or 5) then return false, "minimum_five_contestants" end
     if (pendingAddonUsers or 0) > 0 then return false, "registration_pending" end
     return true
 end

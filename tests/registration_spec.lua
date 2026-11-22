@@ -191,7 +191,7 @@ local function makeClient(index)
             chunk(addon, namespace)
         end
     end
-    assert(table.concat(files, ",") == "Core.lua,Network.lua,Outfits.lua,UI.lua,Main.lua")
+    assert(table.concat(files, ",") == "Core.lua,Teams.lua,Network.lua,Outfits.lua,UI.lua,Main.lua")
     client.event = function(event, ...)
         local frame = client.frames[1]
         if frame.events[event] then frame.scripts.OnEvent(frame, event, ...) end
@@ -1070,3 +1070,101 @@ assertFill(demo,"Tied for 1st place · Valeweaver · 5.0 / 5",212,173,98)
 assertFill(demo,"3rd place · Mossmantle · 4.0 / 5",134,102,56)
 assertFill(demo,"Cinderstep · Not rated",21,31,42)
 print("Registration, contestant preview, emote grid, and medal colors passed")
+
+-- Separate eight-client Team round: host, three duos, and a spectator.
+do
+    roster,clients,packets={}, {}, {}
+    local teamRaid={}
+    for i=1,8 do roster[i]={name="Player"..i,guid="GUID-"..i,online=true} end
+    for i=1,8 do
+        local client=makeClient(i)
+        teamRaid[i]=client
+        client.event("PLAYER_LOGIN")
+        client.slash("")
+    end
+    local host=teamRaid[1]
+    assert(host.click("Contest format") and host.click("Team") and host.find("2").selected)
+    assert(host.click("Open registration"));deliver()
+    advance(6)
+    for i=2,8 do
+        local client=teamRaid[i]
+        assert(client.click(i==8 and "Spectator" or "Contestant") and client.click("Confirm role"))
+        deliver()
+        advance(6)
+        for _=1,3 do
+            if not (client.find("Confirm role") and client.find("Confirm role").enabled) then break end
+            client.click("Refresh");deliver();advance(6)
+            if client.click("Confirm role") then deliver();advance(6) end
+        end
+        assert(not client.click("Confirm role"),"role not confirmed: "..i)
+    end
+    assertLabel(teamRaid[2],"Find a team")
+    assert(not host.click("Start contest"))
+    assert(not teamRaid[8].find("Create team"))
+    local function create(i,name)
+        local c=teamRaid[i]
+        assert(c.click("Create team"))
+        c.env.SYBTeamName:SetText(name)
+        assert(c.click("Create team"));deliver();advance(6)
+        assertLabel(c,name)
+    end
+    create(2,"Gilded Hounds")
+    assert(teamRaid[3].click("Gilded Hounds  ·  1/2  ·  Join"));deliver();advance(6)
+    assert(not teamRaid[3].find("Edit team name") and not teamRaid[3].find("Player2-Realm  ·  Nominate"))
+    assert(teamRaid[2].click("Player3-Realm  ·  Nominate") and teamRaid[2].click("Send nomination"))
+    deliver();advance(6)
+    assert(teamRaid[3].click("Decline"));deliver();advance(6)
+    assert(teamRaid[2].find("Edit team name") and not teamRaid[3].find("Edit team name"))
+    assert(teamRaid[2].click("Player3-Realm  ·  Nominate") and teamRaid[2].click("Send nomination"))
+    deliver();advance(6)
+    assert(teamRaid[3].click("Accept nomination"));deliver();advance(6)
+    assert(not teamRaid[2].find("Edit team name"))
+    assert(teamRaid[3].click("Edit team name"))
+    teamRaid[3].env.SYBTeamName:SetText("Golden Hounds")
+    assert(teamRaid[3].click("Save team name"));deliver();advance(6)
+    assertLabel(teamRaid[2],"Golden Hounds")
+    create(4,"Iron Thorns")
+    assert(teamRaid[5].click("Iron Thorns  ·  1/2  ·  Join"));deliver();advance(6)
+    create(6,"Moonlit Thread")
+    assert(not host.click("Start contest"))
+    assert(teamRaid[7].click("Moonlit Thread  ·  1/2  ·  Join"));deliver();advance(6)
+    assert(not host.find("Edit team name"))
+    assert(host.click("Start contest"));deliver()
+    assert(not teamRaid[3].find("Edit team name"))
+    advance(120)
+    assert(host.click("Begin runway"));deliver()
+    assertLabel(teamRaid[3],"Presenting team  1 of 3")
+    for i=1,3 do
+        assert(host.click(i==3 and "Finish runway" or "Next contestant"));deliver();advance(6)
+    end
+    assert(host.click("Begin voting"));deliver()
+    assertLabel(teamRaid[2],"Rate teams")
+    assert(not rateInLive(teamRaid[2],"Golden Hounds",5))
+    assert(not rateInLive(teamRaid[3],"Golden Hounds",5))
+    assert(rateInLive(teamRaid[8],"Golden Hounds",5) and teamRaid[8].click("Submit ballot"));deliver();advance(6)
+    assert(rateInLive(teamRaid[4],"Golden Hounds",3) and teamRaid[4].click("Submit ballot"));deliver()
+    assert(not host.find("Submit ballot"))
+    advance(54)
+    assert(teamRaid[2].find("Golden Hounds · 4.00 / 5"))
+    assert(host.click("End contest"));deliver()
+end
+print("Team setup, nomination, and live team voting passed")
+
+do
+    roster,clients,packets={}, {}, {}
+    local c=makeClient()
+    c.event("PLAYER_LOGIN")
+    c.slash("teampractice")
+    assertLabel(c,"Team contest · 2 per team\nComplete: 3 / 3 minimum · Unassigned: 0\nPending addon responses: 0")
+    assert(c.click("Start contest") and c.click("Skip countdown") and c.click("Begin runway"))
+    assertLabel(c,"Presenting team  1 of 3")
+    assert(c.click("Next contestant") and c.click("Review outfits"))
+    assertLabel(c,"Outfit 1 of 2 · Runway order")
+    assert(c.click("Next outfit") and c.click("Back to runway"))
+    assert(c.click("Next contestant") and c.click("Finish runway") and c.click("Begin voting"))
+    assert(rateInLive(c,"Gilded Hounds",5) and c.click("Submit ballot"))
+    assert(c.click("Skip vote timer") and c.click("View round results"))
+    assert(c.find("1st place · Gilded Hounds · 5.0 / 5"))
+    assert(#packets==0)
+end
+print("Three-duo offline practice passed")

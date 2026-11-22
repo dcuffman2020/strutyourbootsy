@@ -42,9 +42,16 @@ Click the **minus** under the close button to collapse the addon to a small bar.
 
 Contestants see their own face portrait marked **YOU**. Registered contestant rows and the host’s runway order show face portraits where WoW can render the raid unit. If a player is unavailable or not in view, the portrait tile shows an initial instead. Fictional practice contestants always use initials. This is display-only; it does not target or inspect anyone.
 
+## Team contests
+
+- From the raid leader’s welcome screen, choose **Contest format → Team**, then choose **2, 3, 4, or 5** per team and open registration. Format and size lock for the contest. Solo remains the default.
+- Players who confirm **Contestant** can create a named team or join an open one. The creator becomes Team leader. Only that leader can edit the team name or nominate another teammate; leadership changes only if the nominee accepts. A team leader must hand off before leaving a team that still has members.
+- The raid leader needs **three complete teams** and no unassigned contestants to start. Teams present and are rated as units. Contestants cannot rate their own team; spectators can rate any team. The raid leader does not compete, vote, or manage team names.
+- Outside a group, type **`/syb teampractice`** to test the runway, gallery, and a sample ballot with three fictional duos. See the [Team mode spec](TEAM_MODE_SPEC.md) for details.
+
 ## Next group test
 
-Use this same version on the raid leader and five confirmed contestants. Schema 7 does not mix with earlier builds. Open registration, wait for discovery, confirm all five, and click **Start contest**. Everyone should see the same theme and finish time. At expiry only the leader can begin and advance. The leader sees the full order; participants see the current and next contestant. Verify one consistent progression across all clients through **Runway complete**. During a live contestant’s turn, verify that one deliberate click performs one game emote and the picker vanishes after the leader advances. The current emote hook is covered by mocked client tests; confirm actual animation and layout in Retail. If a client misses an update, use **Refresh** to catch up. If Start is disabled, capture the reason or the `lobby:` value from `/syb status`.
+Use this same version on the raid leader and five confirmed contestants. Schema 8 does not mix with earlier builds. Open registration, wait for discovery, confirm all five, and click **Start contest**. Everyone should see the same theme and finish time. At expiry only the leader can begin and advance. The leader sees the full order; participants see the current and next contestant. Verify one consistent progression across all clients through **Runway complete**. During a live contestant’s turn, verify that one deliberate click performs one game emote and the picker vanishes after the leader advances. The current emote hook is covered by mocked client tests; confirm actual animation and layout in Retail. If a client misses an update, use **Refresh** to catch up. If Start is disabled, capture the reason or the `lobby:` value from `/syb status`.
 
 ## Raid Warnings
 

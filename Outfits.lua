@@ -53,8 +53,8 @@ end
 
 function Outfits:Reset(key)
     if self.key==key then return end
-    self.key,self.active,self.complete=key,nil,0
-    self.entries={}
+    self.key,self.active,self.complete,self.activeSlots=key,nil,0,nil
+    self.entries,self.teamStarts={},{}
     self:HideModel()
     for _,model in pairs(self.models) do
         model:Hide()
@@ -83,7 +83,7 @@ function Outfits:TryCapture(entry,index)
         or type(model.GetItemTransmogInfoList)~="function" or type(model.SetAutoDress)~="function"
         or type(model.SetItemTransmogInfo)~="function" or type(model.IsGeoReady)~="function" then return end
     local key=self.key
-    local function stillActive() return self.key==key and self.active==index and self.entries[index]==entry end
+    local function stillActive() return self.key==key and (self.active==index or self.activeSlots and self.activeSlots[index]) and self.entries[index]==entry end
     entry.loading=true
     local bound,accepted=pcall(function()
         model:Hide()
@@ -139,7 +139,32 @@ end
 function Outfits:Observe(p)
     local session=p.sessionId
     self:Reset(session and (session..":"..(p.round or 1)) or nil)
-    self.active=nil
+    self.active,self.activeSlots=nil,nil
+    if p.teams then
+        local size=p.teams.size
+        local names={}
+        for _,m in ipairs(p.members or {}) do names[m.guid]=m.name end
+        local r=p.runway
+        if r and p.phase=="runway" then self.complete=math.max(self.complete,(r.index-1)*size)
+        elseif r and p.phase=="runway_complete" then self.complete=r.total*size
+        elseif p.voteTotal then self.complete=p.voteTotal*size
+        elseif p.practice and (p.phase=="voting" or p.phase=="round_results") then self.complete=#(p.teamRunwayOrder or {})*size end
+        local function remember(id,index)
+            local team=id and p.teams.rows[id]
+            if not team then return end
+            self:RememberTeam(id,index,size,team,names)
+        end
+        for i,entry in ipairs(p.teamRunwayOrder or {}) do remember(ns.Teams.EntryID(entry),i) end
+        if r and p.phase=="runway" then
+            remember(ns.Teams.EntryID(r.currentGuid),r.index)
+            self.activeSlots={}
+            for i=(r.index-1)*size+1,r.index*size do
+                self.activeSlots[i]=true
+                if self.entries[i] and not p.practice then self:TryCapture(self.entries[i],i) end
+            end
+        end
+        return
+    end
     if p.phase=="runway" and p.runway then
         local r=p.runway
         self.complete=math.max(self.complete,r.index-1)
@@ -162,12 +187,28 @@ function Outfits:Observe(p)
     end
 end
 
+function Outfits:RememberTeam(id,index,size,team,names)
+    self.teamStarts=self.teamStarts or {}
+    local first=(index-1)*size+1
+    self.teamStarts[id]=first
+    for n,guid in ipairs(team.members) do
+        local slot=first+n-1
+        if not self.entries[slot] then self.entries[slot]={name=names[guid] or "Contestant unavailable",guid=guid,team=team.name} end
+    end
+end
+
 function Outfits:RememberRows(rows)
     for _,row in ipairs(rows or {}) do
-        if row.name and row.index<=self.complete and not self.entries[row.index] then
+        if row.team and row.teamData then
+            self:RememberTeam(row.team,row.index,row.teamSize,row.teamData,row.memberNames)
+        elseif row.name and not row.team and row.index<=self.complete and not self.entries[row.index] then
             self.entries[row.index]={name=row.name,guid=row.guid}
         end
     end
+end
+
+function Outfits:FirstForTeam(id)
+    return self.teamStarts and self.teamStarts[id]
 end
 
 function Outfits:Get(index)

@@ -108,9 +108,12 @@ local function resetLiveBallot()
     liveBallot={ratings={}}
     votePageRequested={}
 end
+local teamConfig,teamRequest=nil,nil
+local lastTeamQuery=0
 local function onNetworkEvent(event, data)
     if event == "session_started" then
         resetLiveBallot()
+        teamRequest=nil
         raidCustomTheme=nil
         state = Core.New(data.leader, 1)
         notice = nil
@@ -118,6 +121,15 @@ local function onNetworkEvent(event, data)
         notice = "authority_changed"
     elseif event == "session_ended" and state then
         Core.End(state)
+    elseif event=="team_changed" and teamRequest and network.teams and network.teams.revision>teamRequest.revision then
+        teamRequest=nil
+        notice=nil
+    elseif event=="request_result" and teamRequest and teamRequest.id==data.commandId then
+        if data.status=="rejected" then
+            teamRequest=nil
+            notice=data.reason
+            if data.reason=="snapshot_mismatch" then network:Poll() end
+        end
     elseif event=="request_result" and liveBallot.id==data.commandId then
         if data.status=="rejected" then notice=data.reason end
     elseif event == "request_result" and roleRequest and roleRequest.id == data.commandId then
@@ -133,6 +145,23 @@ local function onNetworkCommand(action, sender, message)
     if action == "START" then
         local projection = network:GetProjection()
         local order = {}
+        if network.teams then
+            local t=network.teams
+            local ready,reason=ns.Teams.Readiness(t,network.roster)
+            if not ready then return false,reason end
+            local contest=Core.New(state.admin,1)
+            contest.minContestants=3
+            for id=1,t.span do
+                if t.rows[id] then
+                    local entry=ns.Teams.Entry(id)
+                    assert(Core.Register(contest,entry,"contestant"))
+                    order[#order+1]=entry
+                end
+            end
+            local ok,why=Core.Start(contest,Core.Shuffle(order,math.random),0)
+            if ok then state=contest end
+            return ok,why,ok and state.order or nil
+        end
         for _, member in ipairs(projection.members) do
             if member.presence == "addon_ready" and member.role == "contestant" then
                 order[#order + 1] = member.name
@@ -199,7 +228,7 @@ local function openRegistration()
     network:RefreshRoster()
     lastSession = math.max(GetServerTime() * 1000, lastSession + 1)
     local id = ("%.0f"):format(lastSession)
-    local ok, reason = network:StartSession(id)
+    local ok, reason = network:StartSession(id,teamConfig)
     if not ok then return false, reason end
     local queued, delivery = network:BeginDiscovery()
     if queued then phaseWarning("registration","Registration is open. Use /syb to join.") end
@@ -264,10 +293,18 @@ local function practiceView()
     local result,turn
     turn=Core.RunwayStatus(c)
     if turn and c.phase=="runway" then turn.endsAt=practice.turnEndsAt end
+    local function labelFor(name)
+        local team=name and practice.teams and practice.teams.rows[ns.Teams.EntryID(name)]
+        return team and team.name or name
+    end
+    if turn and practice.teams then
+        turn.currentGuid=turn.current
+        turn.current,turn.upcoming=labelFor(turn.current),labelFor(turn.upcoming)
+    end
     if c.phase == "round_results" then
         result={}
         for _,name in ipairs(c.order) do
-            result[#result+1]={name=name, average=c.scores[c.round][name]}
+            result[#result+1]={name=labelFor(name), average=c.scores[c.round][name]}
         end
         table.sort(result,function(a,b)
             if a.average==b.average then return a.name<b.name end
@@ -275,26 +312,38 @@ local function practiceView()
         end)
     end
     return {practice=true,isLeader=true,sessionId=practice.id,phase=c.phase,round=c.round,rounds=c.rounds,
-        contestants=#demoNames,spectators=0,pendingResponses=0,members=practice.members,
+        contestants=#practice.members,spectators=0,pendingResponses=0,members=practice.members,
+        teams=practice.teams,completeTeams=practice.teams and 3,unassigned=0,teamRunwayOrder=practice.teams and c.order,
         lobbyState="ready_to_start",discoveryComplete=true,preparation=practice.preparation,preparationSeconds=practice.settings.prep,
         runway=turn,runwaySeconds=practice.runwaySeconds,runwayOrder=c.order,notice=notice,wizard=practice.wizard,
         settings=practice.wizardDraft or practice.settings,customTheme=(practice.wizardDraft or practice.settings).customTheme,ballot=practice.ballot,ballotSubmitted=practice.ballotSubmitted,
         voteEndsAt=practice.voteEndsAt,result=result,reveal=practice.reveal,revealCount=practice.revealCount,
-        practiceVoter=practiceVoter,practicePaused=c.phase=="paused"}
+        practiceVoter=practice.teams and "Practice spectator" or practiceVoter,practicePaused=c.phase=="paused"}
 end
 
-local function enterPractice()
+local function enterPractice(teamMode)
     if grouped() then return false,"practice_solo_only" end
     if not practice then
         practiceCounter=(practiceCounter or 0)+1
         local c=Core.New("Practice host",1)
         local members={}
-        for _,name in ipairs(demoNames) do
+        for _,name in ipairs(teamMode and {} or demoNames) do
             assert(Core.Register(c,name,"contestant"))
             members[#members+1]={name=name,guid=name,presence="addon_ready",role="contestant"}
         end
         practice={id="practice-"..practiceCounter,contest=c,members=members,ballot={},themePool={},
             settings={rounds=1,theme="Random",prep=Network.PREPARATION_SECONDS,vote=60},runwaySeconds=Network.RUNWAY_SECONDS}
+        if teamMode then
+            local t=ns.Teams.New(2)
+            practice.teams=t
+            c.minContestants=3
+            for i,names in ipairs({{"Cinderstep","Valeweaver"},{"Mossmantle","Thistledawn"},{"Copperwink","Emberbrook"}}) do
+                assert(ns.Teams.Apply(t,names[1],"create",nil,nil,({"Gilded Hounds","Iron Thorns","Moonlit Thread"})[i]))
+                assert(ns.Teams.Apply(t,names[2],"join",i))
+                assert(Core.Register(c,ns.Teams.Entry(i),"contestant"))
+                for _,name in ipairs(names) do members[#members+1]={name=name,guid=name,presence="addon_ready",role="contestant"} end
+            end
+        end
         practiceWarning("Registration is open. Use /syb to join.")
     end
     notice=nil
@@ -336,7 +385,7 @@ local function practiceAction(action, argument, value)
     if action=="START" then
         if c.phase~="registration" then return false,"wrong_phase" end
         c.rounds=cfg.rounds
-        local ok,reason=Core.Start(c,Core.Shuffle(demoNames,math.random),0)
+        local ok,reason=Core.Start(c,Core.Shuffle(practice.teams and {"Team-1","Team-2","Team-3"} or demoNames,math.random),0)
         if not ok then return false,reason end
         nextPracticePreparation()
         playCue()
@@ -377,7 +426,7 @@ local function practiceAction(action, argument, value)
     end
     if action=="SUBMIT" then
         if c.phase~="voting" or GetServerTime()>=practice.voteEndsAt then return false,"voting_closed" end
-        local ok,reason=Core.SubmitBallot(c,practiceVoter,practice.ballot)
+        local ok,reason=Core.SubmitBallot(c,practice.teams and "Practice spectator" or practiceVoter,practice.ballot)
         if ok then practice.ballotSubmitted=true end
         return ok,reason
     end
@@ -397,6 +446,7 @@ local function practiceAction(action, argument, value)
     if action=="AWARDS" then
         local winners,reason=Core.FinalResults(c)
         if not winners then return false,reason end
+        if practice.teams then for _,r in ipairs(winners) do r.name=practice.teams.rows[ns.Teams.EntryID(r.name)].name end end
         for i=1,math.min(3,#winners-1) do
             if winners[i].average==winners[i+1].average then return false,"practice_tie" end
         end
@@ -422,6 +472,10 @@ local function runPracticeAction(action,...)
             practiceWarning(("Round %d runway is complete."):format(c.round))
         else
             local _,message=presenterWarning(c,action=="BEGIN_RUNWAY")
+            if message and practice.teams then
+                local turn=Core.RunwayStatus(c)
+                message="Now presenting: "..practice.teams.rows[ns.Teams.EntryID(turn.current)].name.."."
+            end
             if message then practiceWarning(message) end
         end
     elseif action=="VOTING" then
@@ -432,7 +486,7 @@ local function runPracticeAction(action,...)
             local score=c.scores[c.round][name]
             if score and (not best or score>=best) then
                 if score~=best then best,names=score,{} end
-                names[#names+1]=name
+                names[#names+1]=practice.teams and practice.teams.rows[ns.Teams.EntryID(name)].name or name
             end
         end
         local result=#names>0 and (" Top score: "..table.concat(names,", ")..".") or ""
@@ -453,7 +507,12 @@ local function view()
     if practice then return practiceView() end
     local p = network and network:GetProjection() or {}
     local pending = roleRequest and network and network.pending[roleRequest.id]
-    if p.lobbyState == "ready_to_start" and state then
+    p.teamSetupSize=teamConfig
+    if p.teams then
+        p.teamMine=p.teams.byMember[p.localGuid or ""]
+        p.teamPending=teamRequest and teamRequest.session==p.sessionId and GetTime()-teamRequest.sent<6
+    end
+    if not p.teams and p.lobbyState == "ready_to_start" and state then
         local ready, reason = Core.CanStart(state, p.pendingResponses + p.presence.unknown)
         if not ready then p.lobbyState = reason end
     end
@@ -462,6 +521,10 @@ local function view()
     end
     if p.isLeader and state and p.runway then
         p.runwayOrder,p.runwayGuids=state.order,network.contestantGuids
+        if p.teams then
+            p.teamRunwayOrder=state.order
+            p.runwayOrder=nil
+        end
     end
     if liveBallot.session~=p.sessionId then
         resetLiveBallot()
@@ -494,7 +557,11 @@ local function getVotePage(page)
     for name,member in pairs(network.absent) do names[member.guid]=name end
     local display={}
     for i,row in ipairs(rows) do
-        display[i]={guid=row.guid,index=row.index,name=names[row.guid],score=row.score}
+        local teamID=network.teams and ns.Teams.EntryID(row.guid)
+        local team=teamID and network.teams.rows[teamID]
+        display[i]={guid=row.guid,index=row.index,name=teamID and (team and team.name or "Team "..teamID) or names[row.guid],
+            score=row.score,team=teamID,ownTeam=teamID and network.teams.byMember[UnitGUID("player")]==teamID,
+            teamData=team,teamSize=teamID and network.teams.size,memberNames=teamID and names}
     end
     return display
 end
@@ -511,7 +578,7 @@ end
 local function rateLive(row, n)
     local p=view()
     if not p.voterEligible or p.phase~="voting" or p.voteSubmitted or p.ballotPending
-        or GetServerTime()>=p.voteEndsAt or not row.name or row.name==playerName() then return end
+        or GetServerTime()>=p.voteEndsAt or not row.name or row.name==playerName() or row.ownTeam then return end
     local page=math.ceil(row.index/Network.VOTE_PAGE_SIZE)
     local rows=getVotePage(page)
     local current=rows and rows[(row.index-1)%Network.VOTE_PAGE_SIZE+1]
@@ -539,6 +606,40 @@ local function submitLiveBallot()
     if ok then
         liveBallot.sent=GetTime()
         C_Timer.After(6,UI.Refresh)
+    end
+    return ok,reason
+end
+
+local function queryTeam()
+    if not network or not network.teams or network:IsAuthority() then return end
+    local now=GetTime()
+    if now<lastTeamQuery then return end
+    local t=network.teams
+    for i=1,t.span do
+        if not (t.known and t.known[i]) then
+            lastTeamQuery=now+1.25
+            network:RequestTeam(i)
+            return
+        end
+    end
+end
+
+local function doTeamAction(op,slot,other,value)
+    if not network or not network.teams or network.phase~="registration" then return false,"wrong_phase" end
+    if (op=="create" or op=="rename") and not ns.Teams.Name(value) then return false,"team_name_invalid" end
+    if teamRequest and teamRequest.session==network.sessionId and GetTime()-teamRequest.sent<6 then return false end
+    local id=commandId()
+    local ok,reason=network:Request("TEAM",id,{op=op,slot=slot,other=other,txt=value})
+    if ok then
+        teamRequest={id=id,session=network.sessionId,sent=GetTime(),revision=network.teams.revision}
+        C_Timer.After(6,function()
+            if teamRequest and teamRequest.id==id and network then
+                local pending=network.pending[id]
+                if pending and pending.status=="pending" then network:Retry(id) end
+                network:Poll()
+                UI.Refresh()
+            end
+        end)
     end
     return ok,reason
 end
@@ -639,7 +740,12 @@ local function adminAction(action)
             phaseWarning("runway_complete","The runway is complete.")
         else
             local key,message=presenterWarning(state,action=="BEGIN_RUNWAY")
-            if key then phaseWarning(key,message) end
+            if key then if network.teams then
+                    local turn=Core.RunwayStatus(state)
+                    local team=network.teams.rows[ns.Teams.EntryID(turn.current)]
+                    message=("Now presenting team %d of %d: %s."):format(turn.index,turn.total,team and team.name or turn.current)
+                end
+                phaseWarning(key,message) end
         end
     end
     local id, version = network.sessionId, network.version
@@ -655,7 +761,10 @@ local function adminAction(action)
         local results=network.voting.results
         local leaders={}
         for _,r in ipairs(results) do
-            if r.average and r.average==results[1].average then leaders[#leaders+1]=r.name end
+            if r.average and r.average==results[1].average then
+                local team=network.teams and network.teams.rows[ns.Teams.EntryID(r.name)]
+                leaders[#leaders+1]=team and team.name or r.name
+            end
         end
         local names=table.concat(leaders,", ")
         phaseWarning("voting_closed","Voting is closed. "..(#leaders==0 and "No contestant qualified."
@@ -678,7 +787,7 @@ local function announceWinners(input)
     if not IsInRaid() or not network:IsAuthority() or network.originalLeader~=network.leader then
         return false,"Only the contest’s raid leader can announce winners."
     end
-    if network.phase~="runway_complete" then return false,"Finish the runway before announcing winners." end
+    if network.phase~="runway_complete" or network.teams then return false,"Use the solo runway to announce a manual podium." end
     local names,seen={},{}
     for token in input:gmatch("%S+") do
         local matches={}
@@ -722,11 +831,18 @@ frame:SetScript("OnEvent", function(_, event, ...)
             beginRunway=function() run(adminAction,"BEGIN_RUNWAY") end,
             beginVoting=function() run(adminAction,"BEGIN_VOTING") end,
             endContest=function() run(adminAction,"END") end,
+            setContestFormat=function(size)
+                if not practice and (not network or not network.sessionId or network.phase=="ended") then
+                    teamConfig=ns.Teams.ValidSize(size) and size or nil
+                end
+                UI.Refresh()
+            end,
+            queryTeam=queryTeam,teamAction=function(...) return run(doTeamAction,...) end,
             getVotePage=getVotePage, requestVotePage=requestVotePage, votePageSize=Network.VOTE_PAGE_SIZE,
             rateLive=rateLive, submitLiveBallot=function() run(submitLiveBallot) end,
             advanceRunway=function() run(adminAction,"ADVANCE") end,
             leavePractice=leavePractice,
-            restartPractice=function() leavePractice(); enterPractice() end,
+            restartPractice=function() local teamMode=practice and practice.teams~=nil;leavePractice();enterPractice(teamMode) end,
             skipPreparation=function()
                 if practice and practice.contest.phase=="preparation" and practice.preparation then
                     practice.preparation.endsAt=GetServerTime()
@@ -766,6 +882,9 @@ SlashCmdList.STRUTYOURBOOTSY = function(input)
     elseif input == "practice" then
         local ok = enterPractice()
         if not ok then say("Leave your party or raid before starting solo practice.") end
+    elseif input == "teampractice" then
+        if practice and not grouped() then leavePractice() end
+        run(enterPractice,true)
     elseif input == "practice stop" then
         if practice then leavePractice(); say("Solo practice ended.") end
     elseif input == "status" then
@@ -786,6 +905,6 @@ SlashCmdList.STRUTYOURBOOTSY = function(input)
         local ok, reason = run(openRegistration)
         say(ok and "Raid discovery queued." or ("Raid discovery: " .. reason))
     else
-        say("Commands: /syb, /syb practice, /syb status, /syb devstart, /syb devnetstart")
+        say("Commands: /syb, /syb practice, /syb teampractice, /syb status, /syb devstart, /syb devnetstart")
     end
 end

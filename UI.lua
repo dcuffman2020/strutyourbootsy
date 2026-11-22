@@ -9,7 +9,7 @@ local primary, secondary, contestant, spectator, confirmPassive, skipPrep, utili
 local badge, windowHeader, overview, info, votePanel, endOfTimer, heroName, heroNext
 local phases, choices, ratingRows = {}, {}, {}
 local preferencesMode, draftPreferences
-local extra={}
+local extra={outfits=outfits}
 local voteDeadline, voteExpiry, voteSubmitted
 local assetPath="Interface\\AddOns\\StrutYourBootsy\\Assets\\"
 local context = {}
@@ -105,7 +105,20 @@ local messages = {
     registration_pending="Wait for pending addon users to confirm their roles.",
     invalid_theme="Enter a valid theme name.",
     invalid_setting="Choose one of the listed options.",
-    not_eligible="Only registered contestants and spectators may vote.",
+    not_eligible="That action isn’t available to your role.",
+    team_name_invalid="Enter a team name of 1–24 letters, numbers, spaces, apostrophes, or hyphens.",
+    team_already_joined="Leave your current team before joining another.",
+    team_name_taken="That team name is already taken.",
+    team_full="That team has no open spots.",
+    team_not_found="That team is no longer available.",
+    not_team_leader="Only your current Team leader can do that.",
+    team_invalid_nominee="Choose another member of your team.",
+    team_nomination_pending="Respond to the current nomination first.",
+    team_no_nomination="There is no pending nomination for you.",
+    team_transfer_before_leave="Transfer leadership to a teammate before leaving.",
+    team_unassigned="All contestants must join a team or switch to Spectator.",
+    team_need_three="At least three complete teams are required.",
+    team_incomplete="Every team must have the selected number of contestants.",
     self_vote="You cannot vote for yourself.",
     invalid_ballot="The ballot could not be read. Refresh and try again.",
     invalid_rating="Choose 1–5 stars for a contestant other than yourself.",
@@ -333,6 +346,9 @@ end
 
 local function presenting(p)
     if p.isLeader or p.localRole~="contestant" or p.phase~="runway" or not p.runway or p.runwayBlocked then return false end
+    if p.teams then
+        return p.teamMine~=nil and ns.Teams.Entry(p.teamMine)==p.runway.currentGuid
+    end
     local actor=p.practice and extra.previewName or not p.practice and context.playerName()
     return actor and actor==p.runway.current
 end
@@ -703,6 +719,12 @@ function extra.buildInlineOutfit()
     label(card,"Your ratings are kept.",11,113,-51,muted,282)
     local close=button(card,"Close outfit",103,303,-8,function() extra.inlineIndex=nil;UI.Refresh() end)
     close:SetHeight(22)
+    extra.inlineNext=button(card,"Next look",94,312,-37,function()
+        local i=(extra.inlineIndex or 0)+1
+        extra.inlineIndex=i>(extra.inlineLast or 0) and extra.inlineFirst or i
+        UI.Refresh()
+    end)
+    extra.inlineNext:SetHeight(22)
     card:Hide()
 end
 
@@ -712,14 +734,14 @@ function extra.showGallery(p)
     extra.galleryIndex=i
     local entry=outfits:Get(i)
     if not entry and not p.practice then
-        local page=math.ceil(i/context.votePageSize)
+        local page=math.ceil(math.ceil(i/(p.teams and p.teams.size or 1))/context.votePageSize)
         outfits:RememberRows(context.getVotePage(page))
         entry=outfits:Get(i)
         if not entry then extra.pendingVotePage=page;context.requestVotePage(page) end
     end
     extra.gallery:Show()
     extra.galleryCount:SetText(("Outfit %d of %d · Runway order"):format(i,outfits.complete))
-    extra.galleryName:SetText(entry and entry.name or ("Contestant "..i))
+    extra.galleryName:SetText(entry and (entry.name..(entry.team and " · "..entry.team or "")) or ("Contestant "..i))
     extra.galleryPrev:SetEnabled(i>1)
     extra.galleryNext:SetEnabled(i<outfits.complete)
     local shown=outfits:ShowModel(entry,extra.galleryStage,270,325)
@@ -735,6 +757,7 @@ function extra.showInlineOutfit(p)
     if not entry then return end
     extra.inlineOutfit:Show()
     extra.inlineName:SetText(entry.name)
+    extra.inlineNext:SetShown(p.teams~=nil and extra.inlineLast>extra.inlineFirst)
     local shown=outfits:ShowModel(entry,extra.inlineStage,60,62)
     extra.inlineStatus:SetText(shown and "As presented on the runway." or p.practice and "Practice contestant · No live outfit"
         or "Outfit preview unavailable")
@@ -754,7 +777,7 @@ local function build()
     window:SetScript("OnHide",function(self)
         self:StopMovingOrSizing()
         outfits:HideModel()
-        extra.galleryOpen,extra.inlineIndex=nil,nil
+        extra.galleryOpen,extra.inlineIndex,extra.teamScreen=nil,nil,nil
         if extra.help then extra.help:Hide() end
         if extra.isMinimized then
             if extra.themeInput then extra.themeInput:ClearFocus() end
@@ -766,6 +789,7 @@ local function build()
         if extra.themeInput then extra.themeInput:ClearFocus() end
     end)
     window:SetScript("OnUpdate", function(_, elapsed)
+        if context.queryTeam then context.queryTeam() end
         if extra.pendingVotePage then context.requestVotePage(extra.pendingVotePage) end
         if extra.emotesLocked and not extra.emotesCoolingDown() then extra.updateEmoteCooldown() end
         if extra.raidPortraitsActive then
@@ -859,6 +883,7 @@ local function build()
     extra.addReleaseFooter()
     primary = button(window, "Open registration", 152, 285, -516, function()
         local p = context.getProjection()
+        if extra.teamPrimary then extra.teamPrimary();return end
         if preferencesMode then closePreferences(true); return end
         if extra.themeEditor then useTheme(false);return end
         if extra.previewName or extra.viewPicker then return end
@@ -888,6 +913,7 @@ local function build()
     end,true)
     secondary = button(window, "Refresh", 101, 28, -516, function()
         local p=context.getProjection()
+        if extra.teamSecondary then extra.teamSecondary();return end
         if preferencesMode then closePreferences(false);return end
         if extra.themeEditor then closeTheme();return end
         if extra.timerSetup then extra.timerSetup=nil;UI.Refresh();return end
@@ -910,6 +936,7 @@ local function build()
     skipPrep = button(window, "Skip countdown", 140, 135, -516, function() context.skipPreparation() end)
     utility=button(window,"",140,135,-516,function()
         local p=context.getProjection()
+        if extra.teamUtility then extra.teamUtility();return end
         if extra.themeEditor then useTheme(true);return end
         if extra.previewName or extra.viewPicker then return end
         if preferencesMode then
@@ -950,6 +977,32 @@ local function build()
     minimize:SetScript("OnLeave",GameTooltip_Hide)
     extra.buildMiniBar()
     extra.buildHelp()
+    extra.formatButton=button(overview,"Contest format",141,258,-63,function()
+        local p=context.getProjection()
+        extra.teamDraft=p.teamSetupSize or 0
+        extra.teamScreen="format";UI.Refresh()
+    end)
+    extra.teamDirectory=button(info,"Teams",96,304,-8,function() extra.teamScreen="directory";UI.Refresh() end)
+    extra.teamDirectory:SetHeight(22)
+    extra.teamSizeButtons={}
+    extra.teamSizeLabel=label(info,"Contestants per team",12,16,-76,muted,369)
+    for n=2,5 do
+        local size=n
+        extra.teamSizeButtons[n]=button(info,tostring(n),85,16+(n-2)*95,-100,function()
+            extra.teamDraft=size;UI.Refresh()
+        end)
+    end
+    extra.teamInput=CreateFrame("EditBox","SYBTeamName",info,"InputBoxTemplate")
+    extra.teamInput:SetPoint("TOPLEFT",23,-42)
+    extra.teamInput:SetSize(369,30)
+    extra.teamInput:SetAutoFocus(false)
+    extra.teamInput:SetMaxLetters(24)
+    extra.teamInput:SetScript("OnTextChanged",function()
+        if extra.teamInput:IsShown() and extra.teamPrimary then
+            primary:SetEnabled(ns.Teams.Name(extra.teamInput:GetText())~=nil and not context.getProjection().teamPending)
+        end
+    end)
+    extra.teamInput:SetScript("OnEnterPressed",function() if extra.teamPrimary and primary:IsEnabled() then extra.teamPrimary() end end)
     extra.buildOutfitGallery()
     extra.buildInlineOutfit()
     extra.reviewOutfits=button(window,"Review outfits",140,135,-516,function()
@@ -987,8 +1040,11 @@ local function build()
             item.stars[choice]=control
         end
         item.outfit=button(row,"Outfit",70,328,-2,function()
-            local index=item.voteRow and item.voteRow.index or i
-            if outfits:Get(index) then
+            local entry=item.voteRow
+            local index=entry and (entry.team and outfits:FirstForTeam(entry.team) or entry.index) or item.practiceFirst or i
+            if index and outfits:Get(index) then
+                extra.inlineFirst=index
+                extra.inlineLast=index+(entry and entry.teamSize or item.practiceSize or 1)-1
                 extra.inlineIndex=extra.inlineIndex~=index and index or nil
                 UI.Refresh()
             end
@@ -1071,6 +1127,10 @@ local function optionRows(items,customFirst)
         control:ClearAllPoints()
         control:SetPoint("TOPLEFT",16,customFirst and (i==1 and -7 or -(41+(i-2)*25)) or -(7+(i-1)*28))
         control:SetHeight(customFirst and (i==1 and 31 or 23) or 26)
+        control.caption:ClearAllPoints()
+        control.caption:SetPoint("CENTER")
+        control.caption:SetJustifyH("CENTER")
+        if extra.teamRosterLines and extra.teamRosterLines[control] then extra.teamRosterLines[control]:Hide() end
         control.caption:SetMaxLines(customFirst and i==1 and 2 or 1)
         -- WoW requires an explicit boolean even when customFirst is omitted.
         control.caption:SetWordWrap(customFirst == true and i==1)
@@ -1086,7 +1146,165 @@ local function optionRows(items,customFirst)
     end
 end
 
-local function showSettings(p)
+function extra.teamNames(p)
+    local names={}
+    for _,m in ipairs(p.members or {}) do names[m.guid]=m.name end
+    return names
+end
+
+function extra.teamContestScreen(p)
+    local screen=extra.teamScreen
+    local function navigate(nextScreen)
+        extra.teamInput:ClearFocus()
+        extra.teamScreen=nextScreen
+        UI.Refresh()
+    end
+    local function main(text,fn,enabled)
+        extra.teamPrimary=fn
+        actionLabel(primary,text,enabled~=false and not p.teamPending)
+    end
+    local function back(text,fn)
+        extra.teamSecondary=fn
+        actionLabel(secondary,text)
+    end
+    local function side(text,fn)
+        extra.teamUtility=fn
+        actionLabel(utility,text,not p.teamPending)
+    end
+    list:Hide();contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
+    details:SetText("");roleHint:SetText("")
+    primary:Hide();secondary:Hide()
+    if screen=="format" then
+        local size=extra.teamDraft
+        title:SetText("Contest format")
+        summary:SetText(size==0 and "Solo · Each contestant enters alone." or ("Team · %d contestants per team."):format(size))
+        local items={
+            {"Solo",function() extra.teamDraft=0;UI.Refresh() end,size==0},
+            {"Team",function() extra.teamDraft=size>0 and size or 2;UI.Refresh() end,size>0},
+        }
+        optionRows(items)
+        if size>0 then
+            extra.teamSizeLabel:Show()
+            for n=2,5 do
+                local control=extra.teamSizeButtons[n]
+                paintSelection(control,n==size);control:Show()
+            end
+        end
+        main("Open registration",function()
+            context.setContestFormat(size~=0 and size or nil)
+            extra.teamScreen=nil
+            context.openRegistration()
+        end)
+        back("Back",function() navigate(nil) end)
+        return size==0 and "Solo requires five registered contestants." or "Three complete teams needed. Team size locks when registration opens."
+    end
+    local t=p.teams
+    local names=extra.teamNames(p)
+    local own=p.teamMine and t.rows[p.teamMine]
+    if screen=="directory" or (not own and screen~="create") then
+        title:SetText(screen=="directory" and "Teams" or "Find a team")
+        summary:SetText(screen=="directory" and ("%d complete · %d unassigned"):format(p.completeTeams or 0,p.unassigned or 0)
+            or ("Teams of %d · Join an open team or create your own."):format(t.size))
+        local all,memberLines={},{}
+        for i=1,t.span do
+            local row=t.rows[i]
+            if row then
+                local id=i
+                local open=#row.members<t.size
+                all[#all+1]={row.name.."  ·  "..#row.members.."/"..t.size..(open and "  ·  Join" or "  ·  Full"),
+                    open and not p.isLeader and not p.teamPending and function() context.teamAction("join",id) end or nil}
+                local people={}
+                for _,guid in ipairs(row.members) do
+                    local name=names[guid] or "Contestant unavailable"
+                    people[#people+1]=name..(guid==row.lead and " (Team leader)" or "")
+                end
+                memberLines[#all]=table.concat(people,", ")
+            end
+        end
+        local pages=math.max(1,math.ceil(#all/3))
+        local page=math.min(extra.teamPage or 1,pages)
+        local visible,people={},{}
+        for i=(page-1)*3+1,math.min(page*3,#all) do
+            visible[#visible+1]=all[i];people[#visible]=memberLines[i]
+        end
+        if #visible==0 then visible[1]={t.span>0 and "Loading teams…" or "No teams yet."} end
+        optionRows(visible)
+        extra.teamRosterLines=extra.teamRosterLines or {}
+        for i,line in ipairs(people) do
+            local row=choices[i]
+            row:ClearAllPoints();row:SetPoint("TOPLEFT",16,-7-(i-1)*45)
+            row:SetHeight(40)
+            row.caption:ClearAllPoints();row.caption:SetPoint("TOPLEFT",12,-5)
+            row.caption:SetJustifyH("LEFT")
+            if not extra.teamRosterLines[row] then
+                local members=label(row,"",11,12,-23,muted,361)
+                members:SetMaxLines(1);members:SetWordWrap(false)
+                extra.teamRosterLines[row]=members
+            end
+            extra.teamRosterLines[row]:SetText(line);extra.teamRosterLines[row]:Show()
+        end
+        if pages>1 then side("More teams",function() extra.teamPage=page%pages+1;UI.Refresh() end) end
+        if p.isLeader then back("Back",function() navigate(nil) end)
+        else
+            main("Create team",function() extra.teamInput:SetText("");navigate("create");extra.teamInput:SetFocus() end)
+            back("Spectate",function() context.teamAction("spectate") end)
+        end
+        return p.teamPending and "Waiting for the raid leader’s addon to confirm…" or ("Page %d of %d · Three complete teams required."):format(page,pages)
+    end
+    if screen=="create" or (screen=="rename" and own and own.lead==p.localGuid) then
+        local creating=screen=="create"
+        title:SetText(creating and "Create a team" or "Team details")
+        summary:SetText(creating and "You’ll be the Team leader." or "Only the Team leader can edit this name.")
+        details:SetText("Team name")
+        extra.teamInputActive=true
+        extra.teamInput:Show()
+        main(creating and "Create team" or "Save team name",function()
+            local ok=context.teamAction(screen,nil,nil,extra.teamInput:GetText())
+            if ok then navigate(nil) end
+        end,ns.Teams.Name(extra.teamInput:GetText())~=nil)
+        back("Back",function() navigate(nil) end)
+        return "Team names appear in the lobby and on the runway."
+    end
+    if not own then return "Syncing your team…" end
+    local lead=own.lead==p.localGuid
+    if own.nominee==p.localGuid then
+        title:SetText("Team leadership nomination")
+        summary:SetText((names[own.lead] or "Your Team leader").." nominated you to lead "..own.name..".")
+        details:SetText("Accept to become Team leader and edit the team name.")
+        main("Accept nomination",function() context.teamAction("accept",own.nomination) end)
+        back("Decline",function() context.teamAction("decline",own.nomination) end)
+        return "If you decline, nothing changes."
+    end
+    if screen=="nominate" and lead and not own.nominee then
+        local nominee=extra.teamNominee
+        if t.byMember[nominee or ""]==p.teamMine and nominee~=p.localGuid then
+            title:SetText("Nominate a teammate")
+            summary:SetText((names[nominee] or "Your teammate").." must accept before leadership changes.")
+            main("Send nomination",function() if context.teamAction("nominate",nil,nominee) then navigate(nil) end end)
+            back("Back",function() navigate(nil) end)
+            return "You keep naming permissions until the nominee accepts."
+        end
+    end
+    title:SetText(own.name)
+    summary:SetText(("Team roster · %d/%d%s"):format(#own.members,t.size,lead and " · You’re the Team leader" or ""))
+    local items={}
+    for _,g in ipairs(own.members) do
+        local guid=g
+        local name=names[guid] or "Contestant unavailable"
+        local caption=name..(guid==own.lead and "  ·  Team leader" or "")
+        local canNominate=lead and guid~=p.localGuid and not own.nominee and not p.teamPending
+        items[#items+1]={caption..(canNominate and "  ·  Nominate" or ""),
+            canNominate and function() extra.teamNominee=guid;navigate("nominate") end or nil,guid==p.localGuid}
+    end
+    optionRows(items)
+    if lead then main("Edit team name",function() extra.teamInput:SetText(own.name);navigate("rename");extra.teamInput:SetFocus() end) end
+    side("Leave team",function() context.teamAction("leave") end)
+    return p.teamPending and "Waiting for confirmation…" or own.nominee and "Nomination sent. Leadership stays unchanged until accepted."
+        or lead and (#own.members>1 and "Select a teammate to nominate them." or "You can nominate another player once they join.")
+        or "Only the Team leader can name the team or nominate a successor."
+end
+
+function extra.showSettings(p)
     local cfg,w=p.settings,p.wizard
     local data={
         {"How many rounds?", "Choose 1–5 rounds.", "rounds", {1,2,3,4,5}},
@@ -1139,7 +1357,7 @@ function UI.UpdateRunwayClock()
     if left==0 then extra.turnDeadline=nil end
 end
 
-local function showContestTimer(p)
+function extra.showContestTimer(p)
     local prep=extra.timerSetup=="prep"
     title:SetText(prep and "Outfit prep timer" or "Runway timer")
     summary:SetText(prep and "Time for contestants to get dressed. The countdown starts when the theme is revealed."
@@ -1166,7 +1384,7 @@ local function showContestTimer(p)
     return prep and "The host can start the runway after the countdown." or "Time running out does not advance the runway."
 end
 
-local function showPreferences()
+function extra.showPreferences()
     if preferencesMode=="appearance" then return skins.showAppearance() end
     title:SetText("Interface preferences")
     summary:SetText("Preferences are saved for this character.\nPreview changes before saving.")
@@ -1241,7 +1459,7 @@ function skins.showAppearance()
     return "Appearance is saved for this character. It doesn’t change the contest theme."
 end
 
-local function showBallot(p)
+function extra.showBallot(p)
     local remaining=math.max(0,p.voteEndsAt-context.serverNow())
     local closed=remaining==0
     voteExpiry=closed
@@ -1255,20 +1473,26 @@ local function showBallot(p)
     votePanel:Show()
     local edits=false
     for i,row in ipairs(ratingRows) do
-        row.frame:Show()
-        row.outfit:SetShown(outfits:Get(i)~=nil)
-        row.live,row.voteRow=nil,nil
         row.name=p.runwayOrder[i]
-        extra.bindPortrait(row.portrait,row.name)
-        row.label:SetText(row.name==p.practiceVoter and (row.name.." · You (no self-rating)") or row.name)
+        row.frame:SetShown(row.name~=nil)
+        row.live,row.voteRow=nil,nil
+        row.practiceFirst,row.practiceSize=nil,nil
+        if row.name then
+        local team=p.teams and p.teams.rows[ns.Teams.EntryID(row.name)]
+        local display=team and team.name or row.name
+        if team then row.practiceFirst,row.practiceSize=outfits:FirstForTeam(team.id),p.teams.size end
+        row.outfit:SetShown(outfits:Get(row.practiceFirst or i)~=nil)
+        extra.bindPortrait(row.portrait,display)
+        row.label:SetText(row.name==p.practiceVoter and (display.." · You (no self-rating)") or display)
         for n,control in ipairs(row.stars) do
             local rating=p.ballot[row.name] or 0
             edits=edits or rating>0
-            control.ratedName=row.name
+            control.ratedName=display
             control.starTexture:SetTexture(assetPath..(n<=rating and "ArmoryStarOn.tga" or "ArmoryStarOff.tga"))
             control:SetShown(row.name~=p.practiceVoter)
             control:SetEnabled(not (closed or voteSubmitted or p.preview))
             decorate(control,n<=rating and palette.selected or palette.panel,n<=rating and gold or palette.outline)
+        end
         end
     end
     actionLabel(primary,closed and "View round results" or "Submit ballot",closed or edits and not voteSubmitted)
@@ -1297,11 +1521,11 @@ function extra.showLiveVoting(p)
     roleHint:SetText("")
     primary:Hide()
     title:SetText(result and "Round results" or remaining==0 and "Voting has closed"
-        or p.isLeader and "Voting monitor" or p.voteSubmitted and "Ballot accepted" or "Rate contestants")
+        or p.isLeader and "Voting monitor" or p.voteSubmitted and "Ballot accepted" or p.teams and "Rate teams" or "Rate contestants")
     summary:SetText(result and "Aggregate scores · Two ratings needed to qualify."
         or p.isLeader and "The raid leader officiates and does not vote."
         or not canVote and "Only registered contestants and spectators can vote."
-        or p.voteSubmitted and "Your ballot is locked." or "Rate any number of contestants, then submit once.")
+        or p.voteSubmitted and "Your ballot is locked." or p.teams and "Rate other teams, then submit once." or "Rate any number of contestants, then submit once.")
     if not result then endOfTimer:SetText(clockText(remaining)) end
     if not result and not canVote then
         return remaining>0 and "Voting closes at the deadline." or "Waiting for round results…"
@@ -1333,13 +1557,14 @@ function extra.showLiveVoting(p)
     for i,item in ipairs(ratingRows) do
         local entry=rows and rows[i]
         item.frame:SetShown(entry~=nil)
-        item.outfit:SetShown(entry~=nil and entry.name~=nil)
+        item.outfit:SetShown(entry~=nil and entry.name~=nil and (not entry.team or entry.teamData~=nil))
         item.live,item.voteRow=true,entry
+        item.practiceFirst,item.practiceSize=nil,nil
         if entry then
             item.name=entry.name or "Contestant unavailable"
-            local own=entry.name==actor
+            local own=entry.ownTeam==true or entry.name==actor
             extra.bindPortrait(item.portrait,item.name,entry.guid)
-            item.label:SetText(item.name..(own and " · You" or ""))
+            item.label:SetText(item.name..(own and (p.teams and " · Your team" or " · You") or ""))
             for n,control in ipairs(item.stars) do
                 local value=p.ballot[entry.index] or 0
                 control.ratedName=item.name
@@ -1361,7 +1586,7 @@ function extra.showLiveVoting(p)
     return "Select 1–5 stars. Click the same star again to clear."
 end
 
-local function showResults(p)
+function extra.showResults(p)
     local last=p.round==p.rounds
     details:SetText("")
     roleHint:SetText("")
@@ -1402,6 +1627,7 @@ local function showResults(p)
 end
 
 function UI.Refresh()
+    local outfits=extra.outfits
     if not context.getProjection then return end
     local p=context.getProjection()
     outfits:Observe(p)
@@ -1409,6 +1635,12 @@ function UI.Refresh()
     if extra.isMinimized then extra.showMiniStatus(p);return end
     if not window:IsShown() then return end
     extra.gallery:Hide();extra.inlineOutfit:Hide();extra.reviewOutfits:Hide();extra.pauseRunway:Hide()
+    extra.formatButton:Hide();extra.teamDirectory:Hide()
+    extra.teamSizeLabel:Hide()
+    for _,control in pairs(extra.teamSizeButtons) do control:Hide() end
+    extra.teamPrimary,extra.teamSecondary,extra.teamUtility,extra.teamInputActive=nil,nil,nil,nil
+    if extra.teamScreen=="format" and p.sessionId and p.phase~="ended" then extra.teamScreen=nil end
+    if extra.teamScreen~="format" and p.phase~="registration" then extra.teamScreen=nil end
     local galleryPhase=p.phase=="runway" or p.phase=="runway_complete"
     if extra.galleryKey~=outfits.key then
         extra.galleryKey,extra.galleryIndex,extra.galleryOpen,extra.inlineIndex=outfits.key,1,nil,nil
@@ -1454,7 +1686,7 @@ function UI.Refresh()
     extra.turnDeadline=nil
     extra.turnClock:SetText("")
     extra.themeInput:SetShown(extra.themeEditor==true)
-    extra.viewButton:SetShown(p.practice==true and not preferencesMode and not extra.themeEditor and not extra.timerSetup)
+    extra.viewButton:SetShown(p.practice==true and not p.teams and not preferencesMode and not extra.themeEditor and not extra.timerSetup)
     extra.viewButton:SetText(extra.previewName and "Host view" or "View as")
     prefsLink:SetShown(not preferencesMode and not p.preview and not extra.themeEditor and not extra.viewPicker and not extra.timerSetup)
     endOfTimer:SetText("")
@@ -1489,10 +1721,10 @@ function UI.Refresh()
         prompt=extra.themeFeedback or "Up to 48 characters. Start with a letter; use letters, numbers, spaces, commas, apostrophes or hyphens."
     elseif extra.timerSetup then
         contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
-        prompt=showContestTimer(p)
+        prompt=extra.showContestTimer(p)
     elseif preferencesMode then
         contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
-        prompt=showPreferences()
+        prompt=extra.showPreferences()
     elseif extra.viewPicker then
         list:Hide();contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
         title:SetText("View as a contestant")
@@ -1510,14 +1742,17 @@ function UI.Refresh()
         primary:Hide()
         actionLabel(secondary,"Back")
         prompt="This is a read-only preview. No one else sees it."
+    elseif extra.teamScreen=="format" or (registration and p.teams and
+        ((lobby and extra.teamScreen=="directory") or (p.localRole=="contestant" and not p.isLeader))) then
+        prompt=extra.teamContestScreen(p)
     elseif p.wizard then
-        prompt=showSettings(p)
+        prompt=extra.showSettings(p)
     elseif not p.practice and p.voteTotal and (p.phase=="voting" or p.phase=="round_results") then
         prompt=extra.showLiveVoting(p)
     elseif p.practice and p.phase=="voting" then
-        prompt=showBallot(p)
+        prompt=extra.showBallot(p)
     elseif p.practice and p.phase=="round_results" then
-        prompt=showResults(p)
+        prompt=extra.showResults(p)
     elseif p.practice and p.phase=="paused" then
         title:SetText("Runway paused")
         summary:SetText("The same contestant will resume when you’re ready.")
@@ -1527,12 +1762,17 @@ function UI.Refresh()
         prompt="Only the practice contest is paused."
     elseif lobby then
         title:SetText("Registration lobby")
-        if p.practice then actionLabel(utility,"Setup Contest") end
+        if p.practice and not p.teams then actionLabel(utility,"Setup Contest") end
         actionLabel(extra.themeButton,"Theme...")
         if p.runwaySeconds then actionLabel(extra.timerButton,"Runway timer") end
         if p.preparationSeconds then actionLabel(extra.prepButton,"Outfit prep: "..clockText(p.preparationSeconds)) end
         summary:SetText(("Contestants: %d / 5 minimum\nSpectators: %d\nPending addon responses: %d"):format(
             p.contestants, p.spectators, p.pendingResponses))
+        if p.teams then
+            summary:SetText(("Team contest · %d per team\nComplete: %d / 3 minimum · Unassigned: %d\nPending addon responses: %d"):format(
+                p.teams.size,p.completeTeams or 0,p.unassigned or 0,p.pendingResponses))
+            actionLabel(extra.teamDirectory,"Teams")
+        end
         details:SetText("Raid roster")
         roleHint:SetText("")
         updateRoster(p.members)
@@ -1587,12 +1827,20 @@ function UI.Refresh()
         local r = p.runway
         title:SetText(("Round %d of %d: Runway"):format(p.round or 1,p.rounds or 1))
         if p.practice and not p.preview then actionLabel(extra.pauseRunway,"Pause") end
-        summary:SetText(("Presenting  %d of %d"):format(r.index,r.total))
+        summary:SetText((p.teams and "Presenting team  %d of %d" or "Presenting  %d of %d"):format(r.index,r.total))
         heroName:SetText(r.current)
         heroNext:SetText(r.upcoming and "Up next: " .. r.upcoming or "Final presentation")
         extra.turnDeadline=r.endsAt
         UI.UpdateRunwayClock()
-        if p.runwayOrder then
+        if p.teams then
+            local id=ns.Teams.EntryID(r.currentGuid)
+            local team=id and p.teams.rows[id]
+            local names=extra.teamNames(p)
+            local roster={}
+            for _,g in ipairs(team and team.members or {}) do roster[#roster+1]=names[g] or "Contestant unavailable" end
+            details:SetText("On the runway")
+            roleHint:SetText(#roster>0 and table.concat(roster,", ") or "Syncing this team…")
+        elseif p.runwayOrder then
             details:SetText("Runway order")
             roleHint:SetText("")
             local order = {}
@@ -1613,7 +1861,7 @@ function UI.Refresh()
         prompt = p.runwayBlocked and "A contestant is unavailable. Wait for them to return." or ""
     elseif p.phase == "runway_complete" and p.runway then
         title:SetText("Runway complete")
-        summary:SetText(("%d of %d contestants presented."):format(p.runway.total,p.runway.total))
+        summary:SetText((p.teams and "%d of %d teams presented." or "%d of %d contestants presented."):format(p.runway.total,p.runway.total))
         details:SetText("Voting is next")
         roleHint:SetText(p.practice and "Try a sample ballot with the fictional roster."
             or p.isLeader and "Open voting when the raid is ready." or "Wait for the raid leader to open voting.")
@@ -1630,6 +1878,9 @@ function UI.Refresh()
             registration and "Raid registration is open." or "No active contest.")
         primary:SetText("Open registration")
         primary:SetEnabled(p.isLeader == true and (not p.sessionId or p.phase == "ended"))
+        if p.isLeader and not p.practice and (not p.sessionId or p.phase=="ended") then
+            actionLabel(extra.formatButton,p.teamSetupSize and ("Team format: "..p.teamSetupSize) or "Contest format")
+        end
         if context.groupActive and not context.groupActive() then actionLabel(utility,"Practice mode") end
         prompt = (registration or p.lobbyState == "late_joiner") and messages[p.lobbyState] or ""
     end
@@ -1639,6 +1890,7 @@ function UI.Refresh()
         skipPrep:Hide()
         actionLabel(secondary,"Host view")
     end
+    if not extra.teamInputActive then extra.teamInput:Hide() end
     local own=p.localRole=="contestant" and not p.isLeader and p.lobbyState~="late_joiner"
         and p.lobbyState~="disconnected" and not preferencesMode and not extra.viewPicker
         and (p.phase=="registration" or p.phase=="preparation" or p.phase=="runway" or p.phase=="paused"
