@@ -543,7 +543,8 @@ local function optionRows(items,customFirst)
         control:SetPoint("TOPLEFT",16,customFirst and (i==1 and -7 or -(41+(i-2)*25)) or -(7+(i-1)*28))
         control:SetHeight(customFirst and (i==1 and 31 or 23) or 26)
         control.caption:SetMaxLines(customFirst and i==1 and 2 or 1)
-        control.caption:SetWordWrap(customFirst and i==1)
+        -- WoW requires an explicit boolean even when customFirst is omitted.
+        control.caption:SetWordWrap(customFirst == true and i==1)
         control.action=item[2]
         control:SetText(item[1])
         control:SetEnabled(true)

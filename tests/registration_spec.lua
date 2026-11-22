@@ -22,6 +22,10 @@ function methods:GetText() return rawget(self,"text") or "" end
 function methods:SetSize(w,h) self.width,self.height=w,h end
 function methods:SetHeight(h) self.height=h end
 function methods:SetWidth(w) self.width=w end
+function methods:SetWordWrap(wrap)
+    assert(type(wrap)=="boolean", "SetWordWrap expects a boolean, not "..type(wrap))
+    self.wordWrap=wrap
+end
 function methods:SetPoint(...) self.anchor={...} end
 function methods:SetBackdropBorderColor(...) self.border={...} end
 function methods:EnableMouse(value) self.mouse=value end
@@ -458,7 +462,7 @@ assert(demo.click("Custom theme"))
 demo.env.SYBThemeInput:SetText("Midnight Masquerade")
 assert(demo.click("Use theme"))
 local custom=assert(demo.find("Custom theme: Midnight Masquerade"))
-assert(custom.selected and custom.anchor[3] > demo.find("Random").anchor[3])
+assert(custom.selected and custom.caption.wordWrap==true and custom.anchor[3] > demo.find("Random").anchor[3])
 assert(not demo.find("Selected: Random"))
 assert(demo.click("Custom theme: Midnight Masquerade") and demo.env.SYBThemeInput:GetText()=="Midnight Masquerade")
 demo.env.SYBThemeInput:SetText(string.rep("W",48))
@@ -476,7 +480,13 @@ assert(not demo.click("Start contest") and not demo.click("Theme..."))
 assert(demo.click("Host view") and demo.click("Start contest"))
 assertLabel(demo,"Round 1 of 2: Preparation")
 assertLabel(demo,"Theme: Midnight Masquerade")
-assert(demo.click("View as") and demo.click("Valeweaver"))
+assert(demo.click("View as"))
+for _,name in ipairs({"Cinderstep","Valeweaver","Mossmantle","Copperwink","Thistledawn"}) do
+    local option=assert(demo.find(name),"Missing visible practice contestant: "..name)
+    assert(option.enabled and option.caption.wordWrap==false)
+end
+assert(demo.find("Back") and not demo.find("Begin runway"))
+assert(demo.click("Valeweaver"))
 assertLabel(demo,"Registration is closed.\nYour role: Contestant")
 assertLabel(demo,"Time to prepare: 3:00")
 assert(not demo.click("Skip countdown") and not demo.click("Begin runway"))
