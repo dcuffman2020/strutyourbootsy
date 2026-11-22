@@ -429,7 +429,9 @@ local function view()
         if not ready then p.lobbyState = reason end
     end
     if p.isLeader and p.phase=="registration" then p.customTheme=raidCustomTheme; p.runwaySeconds=network.runwaySeconds end
-    if p.isLeader and state and p.runway then p.runwayOrder = state.order end
+    if p.isLeader and state and p.runway then
+        p.runwayOrder,p.runwayGuids=state.order,network.contestantGuids
+    end
     p.notice = notice
     if not p.localRole and pending and pending.status == "pending" then
         p.submittedRole = pending.message.role

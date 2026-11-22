@@ -78,6 +78,10 @@ local function makeClient(index)
     env.CreateFrame = function(_, name, parent)
         local frame = widget(parent)
         client.frames[#client.frames + 1] = frame
+        if parent then
+            parent.testFrames=rawget(parent,"testFrames") or {}
+            table.insert(parent.testFrames,frame)
+        end
         if name then env[name] = frame end
         return frame
     end
@@ -108,6 +112,13 @@ local function makeClient(index)
     end
     env.UnitFullName = function(unit) return unitRow(unit).name, "" end
     env.UnitGUID = function(unit) return unitRow(unit).guid end
+    client.outOfView={}
+    env.UnitIsConnected = function(unit) return unitRow(unit).online~=false end
+    env.UnitIsVisible = function(unit) return not client.outOfView[unitRow(unit).guid] end
+    env.SetPortraitTexture = function(texture,unit)
+        texture.nativePortrait=unitRow(unit).guid
+        texture.portraitUnit=unit
+    end
     env.GetRaidRosterInfo = function(i)
         return roster[i].name, i == 1 and 2 or 0, nil, nil, nil, nil, nil, roster[i].online
     end
@@ -552,6 +563,37 @@ for _,member in ipairs(group) do
     assertLabel(member,"Time’s up")
     assertLabel(member,"Presenting  1 of 5") -- Expiry never advances.
 end
+local function portraitIn(parent)
+    for _,child in ipairs(rawget(parent,"testFrames") or {}) do
+        local textures=rawget(child,"textures")
+        if textures and rawget(child,"labels") then return child,textures[1],child.labels[1] end
+    end
+end
+local function ownPortrait(client)
+    for _,frame in ipairs(client.frames) do
+        for _,line in ipairs(rawget(frame,"labels") or {}) do
+            if line:GetText()=="YOU" then return portraitIn(frame) end
+        end
+    end
+end
+local own,face,fallback=ownPortrait(group[2])
+assert(own:IsShown() and face:IsShown() and face.nativePortrait=="GUID-2" and face.portraitUnit=="player")
+assert(not fallback:IsShown())
+local hostOwn=ownPortrait(leader)
+assert(not hostOwn:IsShown())
+local row=assert(leader.find("Player3-Realm  ·  Presenting"))
+local tile,rowFace,rowFallback=portraitIn(row)
+assert(tile:IsShown() and rowFace:IsShown() and rowFace.nativePortrait=="GUID-3")
+assert(row.caption.anchor[4]>tile.anchor[2]+tile.width)
+local portraitEvent=leader.env.SYBAdminWindow.scripts.OnEvent
+local packetsBeforePortrait=#packets
+leader.outOfView["GUID-3"]=true
+portraitEvent(nil,"UNIT_PORTRAIT_UPDATE","raid3")
+assert(not rowFace:IsShown() and rowFallback:IsShown() and rowFallback:GetText()=="P")
+leader.outOfView["GUID-3"]=nil
+portraitEvent(nil,"PORTRAITS_UPDATED")
+assert(rowFace:IsShown() and rowFace.nativePortrait=="GUID-3" and not rowFallback:IsShown())
+assert(#packets==packetsBeforePortrait,"Portrait refresh must never send raid traffic.")
 local order = {"Player3-Realm","Player4-Realm","Player5-Realm","Player6-Realm","Player2-Realm"}
 for j,name in ipairs(order) do
     if j > 1 then advance(6) end
@@ -777,6 +819,8 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         assertLabel(demo,"Turn 2:00")
         assert(demo.click("View as") and demo.click("Valeweaver"))
         assertLabel(demo,"You’re presenting now.")
+        local own,face,fallback=ownPortrait(demo)
+        assert(own:IsShown() and not face:IsShown() and fallback:IsShown() and fallback:GetText()=="V")
         assert(demo.click("−") and not demo.env.SYBAdminWindow:IsShown())
         assertLabel(demo,"Presenting: Valeweaver")
         demo.env.SYBMinimapLauncher.scripts.OnClick(demo.env.SYBMinimapLauncher)

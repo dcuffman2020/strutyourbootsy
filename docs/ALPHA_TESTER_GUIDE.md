@@ -29,6 +29,10 @@ Click the **minus** under the close button to collapse the addon to a small bar.
 8. Choose **View as** in the practice header and pick a fictional contestant. This read-only view shows their side of the current phase, with the same timer and current/next turns but no host controls. **Host view** returns you without changing the contest. Try switching views before and after the reveal.
 9. Preview the contestant who is presenting and open **Emotes +**. The top row is always **Bow**, **Wave**, **Dance**, **Flex**, and **Chicken**. The other 15 slots are sampled from the runway emote pool without repeats. Close and reopen the panel during the same turn to verify the choices stay put; a new turn loads a fresh draw. Practice shows feedback but does not perform a game emote. A contestant who is merely up next should not see the picker.
 
+## Contestant portraits
+
+Contestants see their own face portrait marked **YOU**. Registered contestant rows and the host’s runway order show face portraits where WoW can render the raid unit. If a player is unavailable or not in view, the portrait tile shows an initial instead. Fictional practice contestants always use initials. This is display-only; it does not target or inspect anyone.
+
 ## Next group test
 
 Use this same version on the raid leader and five confirmed contestants. Schema 4 does not mix with earlier builds. Open registration, wait for discovery, confirm all five, and click **Start contest**. Everyone should see the same theme and finish time. At expiry only the leader can begin and advance. The leader sees the full order; participants see the current and next contestant. Verify one consistent progression across all clients through **Runway complete**. During a live contestant’s turn, verify that one deliberate click performs one game emote and the picker vanishes after the leader advances. The current emote hook is covered by mocked client tests; confirm actual animation and layout in Retail. If a client misses an update, use **Refresh** to catch up. If Start is disabled, capture the reason or the `lobby:` value from `/syb status`.

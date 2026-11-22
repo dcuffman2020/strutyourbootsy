@@ -580,6 +580,61 @@ function extra.buildHelp()
     help:Hide()
 end
 
+-- Portraits are local UI only: never inspect/target a unit or send portrait data to the raid.
+extra.portraits={}
+function extra.newPortrait(parent,size,x,y)
+    local frame=panel(y,size,palette.tag,palette.outline,parent,x,size)
+    local texture=frame:CreateTexture(nil,"ARTWORK")
+    texture:SetPoint("CENTER")
+    texture:SetSize(size-4,size-4)
+    local fallback=label(frame,"",size>30 and 22 or 11,0,0,muted)
+    fallback:ClearAllPoints()
+    fallback:SetPoint("CENTER")
+    local entry={frame=frame,texture=texture,fallback=fallback}
+    extra.portraits[#extra.portraits+1]=entry
+    frame:Hide()
+    return entry
+end
+
+function extra.bindPortrait(entry,name,guid,player)
+    entry.name,entry.guid,entry.player=name,guid,player
+    entry.frame:SetShown(name~=nil)
+    if name then entry.fallback:SetText((name:match("^[A-Za-z]") or "–"):upper()) end
+end
+
+function extra.refreshPortraits()
+    if not window:IsShown() then return end
+    local units={}
+    local needRaidUnits=false
+    for _,entry in ipairs(extra.portraits) do
+        needRaidUnits=needRaidUnits or entry.name~=nil and entry.guid~=nil
+    end
+    extra.raidPortraitsActive=needRaidUnits and IsInRaid()
+    if extra.raidPortraitsActive then
+        for i=1,GetNumGroupMembers() do
+            local unit="raid"..i
+            local guid=UnitGUID(unit)
+            if guid and not (issecretvalue and issecretvalue(guid)) then units[guid]=unit end
+        end
+    end
+    for _,entry in ipairs(extra.portraits) do
+        if entry.name then
+            local unit=entry.player and "player" or units[entry.guid]
+            local painted=false
+            if unit and type(SetPortraitTexture)=="function" then
+                local ok,result=pcall(function()
+                    if not entry.player and (not UnitIsConnected(unit) or not UnitIsVisible(unit)) then return false end
+                    SetPortraitTexture(entry.texture,unit)
+                    return true
+                end)
+                painted=ok and result==true
+            end
+            entry.texture:SetShown(painted)
+            entry.fallback:SetShown(not painted)
+        end
+    end
+end
+
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
     window:SetSize(465, 564+skins.footerPadding)
@@ -602,6 +657,13 @@ local function build()
         if extra.themeInput then extra.themeInput:ClearFocus() end
     end)
     window:SetScript("OnUpdate", function(_, elapsed)
+        if extra.raidPortraitsActive then
+            extra.portraitTick=(extra.portraitTick or 0)+elapsed
+            if extra.portraitTick>=2 then
+                extra.portraitTick=0
+                extra.refreshPortraits()
+            end
+        end
         if not (prepDeadline and prepSeconds~=0) and not voteDeadline and not extra.turnDeadline then return end
         prepTick=prepTick+elapsed
         if prepTick<0.25 then return end
@@ -643,6 +705,12 @@ local function build()
     endOfTimer=label(overview,"",25,13,-61,gold,391)
     heroName=label(overview,"",24,13,-30,pale,391)
     heroNext=label(overview,"",13,13,-71,gold,391)
+    extra.selfPortrait=extra.newPortrait(overview,46,352,-31)
+    extra.portraitYou=label(overview,"YOU",10,352,-81,muted,46)
+    extra.portraitYou:SetJustifyH("CENTER")
+    window:RegisterEvent("UNIT_PORTRAIT_UPDATE")
+    window:RegisterEvent("PORTRAITS_UPDATED")
+    window:SetScript("OnEvent",extra.refreshPortraits)
     contestant = button(overview, "Contestant", 148, 18, -64, function()
         selectedRole = "contestant"
         UI.Refresh()
@@ -773,7 +841,7 @@ local function build()
     votePanel=panel(-265,150,palette.panel,palette.outline)
     for i=1,5 do
         local row=panel(-5-(i-1)*28,27,palette.window,palette.outline,votePanel,5,407)
-        local item={frame=row,label=label(row,"",13,9,-6,pale,209),stars={}}
+        local item={frame=row,label=label(row,"",13,35,-6,pale,183),stars={},portrait=extra.newPortrait(row,21,7,-3)}
         for n=1,5 do
             local choice=n
             local control=button(row,"",26,233+(choice-1)*30,-2,function()
@@ -812,12 +880,20 @@ local function updateRoster(members, runway)
                 selectedObserver = self.member
                 UI.Refresh()
             end)
+            row.portrait=extra.newPortrait(row,20,7,-3)
             rows[index] = row
         end
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", 0, -(index - 1) * pitch)
         row:SetHeight(pitch - 1)
         row.member = member
+        local showPortrait=runway or member.role=="contestant"
+        extra.bindPortrait(row.portrait,showPortrait and member.name or nil,member.guid)
+        row.caption:ClearAllPoints()
+        if showPortrait then row.caption:SetPoint("LEFT",row,"LEFT",34,0)
+        else row.caption:SetPoint("CENTER") end
+        row.caption:SetJustifyH(showPortrait and "LEFT" or "CENTER")
+        row.caption:SetWidth(showPortrait and 330 or 362)
         local selected = selectedObserver and selectedObserver.guid == member.guid
         if selected and member.presence == "unknown" then stillSelected = member end
         local role = member.role and (" / " .. member.role) or ""
@@ -1041,6 +1117,7 @@ local function showBallot(p)
     local edits=false
     for i,row in ipairs(ratingRows) do
         row.name=p.runwayOrder[i]
+        extra.bindPortrait(row.portrait,row.name)
         row.label:SetText(row.name==p.practiceVoter and (row.name.." · You (no self-rating)") or row.name)
         for n,control in ipairs(row.stars) do
             local rating=p.ballot[row.name] or 0
@@ -1108,6 +1185,8 @@ function UI.Refresh()
     if extra.isMinimized then extra.showMiniStatus(context.getProjection());return end
     if not window:IsShown() then return end
     local p = context.getProjection()
+    for _,entry in ipairs(extra.portraits) do extra.bindPortrait(entry) end
+    extra.portraitYou:Hide()
     if p.phase~="registration" then extra.timerSetup=nil end
     if not p.practice or extra.previewSession and extra.previewSession~=p.sessionId then
         extra.previewName,extra.viewPicker,extra.previewSession=nil,nil,nil
@@ -1283,7 +1362,7 @@ function UI.Refresh()
             roleHint:SetText("")
             local order = {}
             for i,name in ipairs(p.runwayOrder) do
-                order[i] = {name=name,label=i<r.index and "Presented" or i==r.index and "Presenting"
+                order[i] = {name=name,guid=p.runwayGuids and p.runwayGuids[name],label=i<r.index and "Presented" or i==r.index and "Presenting"
                     or i==r.index+1 and "Up next" or "Waiting"}
             end
             updateRoster(order,true)
@@ -1326,6 +1405,15 @@ function UI.Refresh()
         skipPrep:Hide()
         actionLabel(secondary,"Host view")
     end
+    local own=p.localRole=="contestant" and not p.isLeader and p.lobbyState~="late_joiner"
+        and p.lobbyState~="disconnected" and not preferencesMode and not extra.viewPicker
+        and (p.phase=="registration" or p.phase=="preparation" or p.phase=="runway" or p.phase=="paused"
+            or p.phase=="runway_complete" or p.phase=="voting" or p.phase=="round_results")
+    if own then extra.bindPortrait(extra.selfPortrait,p.preview and extra.previewName or context.playerName(),nil,not p.practice) end
+    extra.portraitYou:SetShown(own==true)
+    heroName:SetWidth(own and 325 or 391)
+    heroNext:SetWidth(own and 325 or 391)
+    extra.refreshPortraits()
     updateEmoteDrawer(p)
     local noticeText = p.notice and (messages[p.notice] or ("Action failed (" .. p.notice .. "). Refresh and try again."))
     actionNotice:SetText(noticeText and noticeText ~= prompt and noticeText or "")
