@@ -11,6 +11,10 @@ This is a private test build. Live raid play still ends at the runway. Solo prac
 
 Open **Options → Appearance**. Select **Tournament Armory**, **Goldleaf Grimoire**, **Studio Modern**, or **Neon Circuit** to preview it immediately on the live window. The swatches identify each look; the checkmark shows what you are previewing. **Apply theme** saves this character’s appearance and returns to Options. **Cancel** or closing the window discards an unapplied preview. Appearance is client-only and separate from the contest theme. High contrast and other interface settings still work with every skin.
 
+## Watch the runway without the full window
+
+Click the **minus** under the close button to collapse the addon to a small bar. The contest continues and the bar shows who is presenting. Click **Restore**, the minimap icon, or type **/syb** to reopen the current screen. Drag the full window by its header or the small bar by its left side. Native dragging is independent of BlizzMove and only touches this addon’s two windows. If you prefer to manage movement with an external addon, set **Options → Window dragging** to **Off**, then save. Window and bar positions are independent within the current game session.
+
 ## Test solo (no group needed)
 
 1. While outside a party or raid, type **`/syb practice`**. The window is marked **Practice mode**, with five fictional contestants ready in the lobby.

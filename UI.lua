@@ -198,6 +198,7 @@ end
 local function applyPreferences()
     local p=draftPreferences or context.preferences
     window:SetScale(p.scale or 1)
+    if extra.mini then extra.mini:SetScale(p.scale or 1) end
     local key=skins.key(p.appearance)
     if key==skins.active and p.highContrast==skins.contrast then return end
     skins.active,skins.contrast=key,p.highContrast
@@ -218,7 +219,7 @@ local function openPreferences()
     if preferencesMode then return end
     local p=context.preferences
     draftPreferences={scale=p.scale or 1,highContrast=p.highContrast,reduceMotion=p.reduceMotion,sounds=p.sounds,
-        appearance=skins.key(p.appearance)}
+        appearance=skins.key(p.appearance),nativeDrag=p.nativeDrag~=false}
     preferencesMode=true
     UI.Refresh()
 end
@@ -232,7 +233,7 @@ local function closePreferences(save)
         return
     end
     if save then
-        for _,k in ipairs({"scale","highContrast","reduceMotion","sounds"}) do context.preferences[k]=draftPreferences[k] end
+        for _,k in ipairs({"scale","highContrast","reduceMotion","sounds","nativeDrag"}) do context.preferences[k]=draftPreferences[k] end
     end
     draftPreferences,preferencesMode=nil,nil
     UI.Refresh()
@@ -427,6 +428,50 @@ function skins.buildChrome(trim,jewel)
     end
 end
 
+-- Own frames only. No global mouse hooks, BlizzMove registration or saved positions to compete over.
+function extra.bindWindowDrag(handle,target)
+    handle:EnableMouse(true)
+    handle:RegisterForDrag("LeftButton")
+    handle:SetScript("OnDragStart",function()
+        if (draftPreferences or context.preferences).nativeDrag~=false then target:StartMoving() end
+    end)
+    handle:SetScript("OnDragStop",function() target:StopMovingOrSizing() end)
+end
+
+function extra.buildMiniBar()
+    local bar=CreateFrame("Frame","SYBMinimizedBar",UIParent,"BackdropTemplate")
+    extra.mini=bar
+    bar:SetSize(244,39)
+    bar:SetPoint("TOPLEFT",window,"TOPLEFT",0,0)
+    bar:SetFrameStrata("DIALOG")
+    bar:SetMovable(true)
+    bar:SetClampedToScreen(true)
+    bar:SetScript("OnHide",bar.StopMovingOrSizing)
+    decorate(bar,palette.header,gold)
+    extra.bindWindowDrag(bar,bar)
+    label(bar,"STRUT YOUR BOOTSY",11,9,-4,gold,151)
+    extra.miniStatus=label(bar,"",11,9,-21,pale,151)
+    extra.miniStatus:SetMaxLines(1)
+    local restore=button(bar,"Restore",69,167,-6,function() UI.Show() end)
+    restore:SetHeight(26)
+    bar:Hide()
+end
+
+function extra.minimize()
+    extra.isMinimized=true
+    window:Hide()
+    extra.mini:Show()
+    UI.Refresh()
+end
+
+function extra.showMiniStatus(p)
+    local current=p.runway and p.phase=="runway" and p.runway.current
+    local text=current and ("Presenting: "..current)
+        or ({registration="Registration",preparation="Preparing outfits",paused="Runway paused",
+            runway_complete="Runway complete",voting="Voting",round_results="Results"})[p.phase] or "Minimized"
+    extra.miniStatus:SetText(text)
+end
+
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
     window:SetSize(465, 564)
@@ -436,11 +481,12 @@ local function build()
     window:SetClampedToScreen(true)
     decorate(window,palette.window,gold)
     window:EnableMouse(true)
-    window:RegisterForDrag("LeftButton")
-    window:SetScript("OnDragStart", window.StartMoving)
-    window:SetScript("OnDragStop", window.StopMovingOrSizing)
     window:SetScript("OnHide",function(self)
         self:StopMovingOrSizing()
+        if extra.isMinimized then
+            if extra.themeInput then extra.themeInput:ClearFocus() end
+            return
+        end
         if preferencesMode then draftPreferences,preferencesMode=nil,nil;applyPreferences() end
         extra.themeEditor,extra.viewPicker,extra.timerSetup=nil,nil,nil
         extra.emoteOpen,extra.emoteFeedback=nil,nil
@@ -464,6 +510,7 @@ local function build()
     end)
 
     windowHeader=panel(-17,53,palette.header,palette.trim)
+    extra.bindWindowDrag(windowHeader,window)
     local logo=windowHeader:CreateTexture(nil,"ARTWORK")
     logo:SetSize(34,34)
     logo:SetPoint("LEFT",12,0)
@@ -574,7 +621,7 @@ local function build()
         if extra.previewName or extra.viewPicker then return end
         if preferencesMode then
             draftPreferences={scale=1,highContrast=false,reduceMotion=false,sounds=false,
-                appearance=skins.key(context.preferences.appearance)}
+                appearance=skins.key(context.preferences.appearance),nativeDrag=true}
             UI.Refresh()
         elseif p.phase=="registration" and p.practice then context.practiceAction("SETUP")
         elseif p.phase=="runway" and p.practice then context.practiceAction("PAUSE")
@@ -588,8 +635,8 @@ local function build()
     prefsLink=button(windowHeader,"Options",72,305,-12,openPreferences)
     buildThemeAndPreviewControls()
     buildEmoteDrawer()
-    local close=button(windowHeader,"",25,380,-12,function() window:Hide() end)
-    close:SetHeight(25)
+    local close=button(windowHeader,"",25,380,-5,function() window:Hide() end)
+    close:SetHeight(20)
     local closeIcon=close:CreateTexture(nil,"ARTWORK")
     closeIcon:SetTexture(assetPath.."ArmoryClose.tga")
     closeIcon:SetSize(13,13)
@@ -600,6 +647,15 @@ local function build()
         GameTooltip:Show()
     end)
     close:SetScript("OnLeave",GameTooltip_Hide)
+    local minimize=button(windowHeader,"−",25,380,-28,extra.minimize)
+    minimize:SetHeight(20)
+    minimize:SetScript("OnEnter",function(self)
+        GameTooltip:SetOwner(self,"ANCHOR_TOP")
+        GameTooltip:SetText("Minimize")
+        GameTooltip:Show()
+    end)
+    minimize:SetScript("OnLeave",GameTooltip_Hide)
+    extra.buildMiniBar()
     votePanel=panel(-265,150,palette.panel,palette.outline)
     for i=1,5 do
         local row=panel(-5-(i-1)*28,27,palette.window,palette.outline,votePanel,5,407)
@@ -789,7 +845,7 @@ local function showPreferences()
     roleHint:SetText("")
     local p=draftPreferences
     local values={.75,1,1.25,1.5}
-    local titleText={highContrast="High contrast",reduceMotion="Reduce motion",sounds="Optional sounds"}
+    local titleText={highContrast="High contrast",reduceMotion="Reduce motion",sounds="Optional sounds",nativeDrag="Window dragging"}
     local choices={
         {("Window scale: %d%%"):format(p.scale*100),function()
             local i=1
@@ -798,7 +854,7 @@ local function showPreferences()
             UI.Refresh()
         end,true}
     }
-    for _,name in ipairs({"highContrast","reduceMotion","sounds"}) do
+    for _,name in ipairs({"highContrast","reduceMotion","sounds","nativeDrag"}) do
         local key=name
         choices[#choices+1]={titleText[key]..": "..(p[key] and "On" or "Off"),
             function() p[key]=not p[key];UI.Refresh() end,p[key]}
@@ -807,6 +863,7 @@ local function showPreferences()
         preferencesMode="appearance"
         UI.Refresh()
     end}
+    info:SetHeight(177)
     optionRows(choices)
     actionLabel(primary,"Save preferences")
     actionLabel(secondary,"Cancel")
@@ -933,7 +990,9 @@ local function showResults(p)
 end
 
 function UI.Refresh()
-    if not window or not window:IsShown() then return end
+    if not window then return end
+    if extra.isMinimized then extra.showMiniStatus(context.getProjection());return end
+    if not window:IsShown() then return end
     local p = context.getProjection()
     if p.phase~="registration" then extra.timerSetup=nil end
     if not p.practice or extra.previewSession and extra.previewSession~=p.sessionId then
@@ -1162,6 +1221,10 @@ end
 
 function UI.Show()
     if not window then build() end
+    if extra.isMinimized then
+        extra.isMinimized=nil
+        extra.mini:Hide()
+    end
     window:Show()
     UI.Refresh()
 end

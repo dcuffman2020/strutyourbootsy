@@ -231,10 +231,28 @@ end
 solo.slash("")
 local window = solo.env.SYBAdminWindow
 assert(window:IsShown() and solo.env.UISpecialFrames[1] == "SYBAdminWindow")
-window.scripts.OnDragStart(window)
+local header=assert(solo.find("−")).parent
+local bar=solo.env.SYBMinimizedBar
+assert(not window.scripts.OnDragStart and not bar:IsShown())
+header.scripts.OnDragStart(header)
 assert(window.moving)
-window.scripts.OnDragStop(window)
+header.scripts.OnDragStop(header)
 assert(not window.moving)
+assert(solo.click("−") and bar:IsShown() and not window:IsShown())
+bar.scripts.OnDragStart(bar)
+assert(bar.moving and not window.moving)
+bar.scripts.OnDragStop(bar)
+assert(not bar.moving)
+assert(solo.click("Restore") and window:IsShown() and not bar:IsShown())
+assert(solo.click("Options") and solo.click("Window dragging: On") and solo.click("Save preferences"))
+assert(solo.env.SYBCharacterDB.preferences.nativeDrag==false)
+header.scripts.OnDragStart(header)
+assert(not window.moving)
+assert(solo.click("−"))
+bar.scripts.OnDragStart(bar)
+assert(not bar.moving)
+solo.slash("")
+assert(window:IsShown() and not bar:IsShown())
 solo.slash("")
 assert(not window:IsShown())
 local launcher = solo.env.SYBMinimapLauncher
@@ -490,6 +508,8 @@ for j,name in ipairs(order) do
         assert(not leader.click("Next contestant"))
         roster[3].online=true; leader.event("GROUP_ROSTER_UPDATE")
         group[6].missReveal=true -- miss this turn update; recover via refresh below.
+        assert(group[2].click("−") and group[2].env.SYBMinimizedBar:IsShown())
+        assertLabel(group[2],"Presenting: Player3-Realm")
     end
     assert(leader.click(j==5 and "Finish runway" or "Next contestant")); deliver()
     assert(#leader.warnings==3+j)
@@ -497,6 +517,9 @@ for j,name in ipairs(order) do
         assert(leader.warnings[3+j]==("Strut Your Bootsy: Now presenting (%d/5): %s."):format(j+1,order[j+1]))
     end
     if j==1 then
+        assertLabel(group[2],"Presenting: Player4-Realm")
+        assert(group[2].click("Restore"))
+        assertLabel(group[2],"Presenting  2 of 5")
         assert(not group[3].click("Emotes +") and not group[3].click("Chicken"))
         assertLabel(group[6],"Presenting  1 of 5")
         assertLabel(group[6],"Player3-Realm")
@@ -639,6 +662,11 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         assertLabel(demo,"Turn 2:00")
         assert(demo.click("View as") and demo.click("Valeweaver"))
         assertLabel(demo,"You’re presenting now.")
+        assert(demo.click("−") and not demo.env.SYBAdminWindow:IsShown())
+        assertLabel(demo,"Presenting: Valeweaver")
+        demo.env.SYBMinimapLauncher.scripts.OnClick(demo.env.SYBMinimapLauncher)
+        assert(demo.env.SYBAdminWindow:IsShown() and not demo.env.SYBMinimizedBar:IsShown())
+        assertLabel(demo,"CONTESTANT VIEW  /  Valeweaver")
         assert(demo.click("Emotes +"))
         local choices=assertEmoteGrid(demo)
         assert(demo.emoteDraws==15 and #demo.emotes==0)
