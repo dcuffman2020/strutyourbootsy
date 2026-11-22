@@ -53,7 +53,13 @@ function methods:StopMovingOrSizing() self.moving = false end
 local function widget(parent)
     return setmetatable({scripts={}, events={}, parent=parent, shown=true, enabled=true}, widgets)
 end
-function methods:CreateTexture() return widget(self) end
+function methods:SetTexture(path) self.texture=path end
+function methods:CreateTexture()
+    local tex=widget(self)
+    self.textures=rawget(self,"textures") or {}
+    self.textures[#self.textures+1]=tex
+    return tex
+end
 function methods:CreateFontString()
     local label = widget(self)
     self.labels = rawget(self, "labels") or {}
@@ -254,6 +260,12 @@ assert(window.moving)
 header.scripts.OnDragStop(header)
 assert(not window.moving)
 assert(solo.click("−") and bar:IsShown() and not window:IsShown())
+local miniLogo=bar.textures[1]
+assert(miniLogo.texture==solo.env.SYBMinimapLauncher.normalTexture)
+assert(miniLogo.width==24 and miniLogo.height==24 and bar.width==244)
+assert(bar.labels[1].anchor[2]>miniLogo.anchor[2]+miniLogo.width)
+local restoreButton=assert(solo.find("Restore"))
+assert(bar.labels[1].anchor[2]+bar.labels[1].width<restoreButton.anchor[2])
 bar.scripts.OnDragStart(bar)
 assert(bar.moving and not window.moving)
 bar.scripts.OnDragStop(bar)
