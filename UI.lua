@@ -345,6 +345,23 @@ local function loadRunwayEmotes()
     extra.emotesLoaded=true
 end
 
+local emoteCooldown=2
+
+function extra.emotesCoolingDown()
+    return extra.nextEmoteAt~=nil and GetTime()<extra.nextEmoteAt
+end
+
+function extra.updateEmoteCooldown()
+    local locked=extra.emotesCoolingDown()
+    if locked~=extra.emotesLocked then
+        extra.emotesLocked=locked
+        for _,control in ipairs(extra.emoteButtons) do control:SetEnabled(not locked) end
+    end
+    local message=extra.emoteFeedback or (extra.emotePractice and "Practice only. Emotes won’t play in WoW." or "Choose an emote to perform it.")
+    if locked then message="Emotes on cooldown. "..(extra.emoteFeedback or "Ready again in a moment.") end
+    extra.emoteNote:SetText(message)
+end
+
 local function buildEmoteDrawer()
     local function canChoose()
         return window:IsShown() and extra.emoteToggle:IsShown() and presenting(context.getProjection())
@@ -369,17 +386,20 @@ local function buildEmoteDrawer()
         local row,column=math.floor((i-1)/5),(i-1)%5
         local width,start=66,14
         local control=button(extra.emoteDrawer,runwayFavorites[i] or "",width,start+column*(width+6),-6-row*25,function(self)
-            if not extra.emoteDrawer:IsShown() or not extra.emoteOpen then return end
+            if not extra.emoteDrawer:IsShown() or not extra.emoteOpen or extra.emotesCoolingDown() then return end
             local name=self:GetText()
             if not name or name=="" then return end
             if canPreview() then
-                extra.emoteFeedback="Practice: "..name.." selected. Nothing was sent to WoW."
+                extra.nextEmoteAt=GetTime()+emoteCooldown
+                extra.emoteFeedback="Practice: "..name.." selected. No emote sent."
             elseif canChoose() then
+                -- Lock before calling into the client. Never queue or replay extra clicks.
+                extra.nextEmoteAt=GetTime()+emoteCooldown
                 local api=C_ChatInfo and C_ChatInfo.PerformEmote
                 local ok,performed
                 if type(api)=="function" then ok,performed=pcall(api,name:upper()) end
                 extra.emoteFeedback=ok and performed==true and ("Performed "..name..".")
-                    or "Emote unavailable. Try your usual chat command."
+                    or "Emote unavailable. Try it in chat."
             else return end
             UI.Refresh()
         end)
@@ -401,7 +421,8 @@ local function updateEmoteDrawer(p)
     window:SetHeight((expanded and 589 or 564)+skins.footerPadding)
     if expanded then info:SetHeight(200) end
     extra.emoteDrawer:SetShown(expanded)
-    extra.emoteNote:SetText(extra.emoteFeedback or (p.preview and "Practice only. Emotes won’t play in WoW." or "Choose an emote to perform it."))
+    extra.emotePractice=p.preview==true
+    extra.updateEmoteCooldown()
 end
 
 function skins.buildChrome(trim,jewel)
@@ -657,6 +678,7 @@ local function build()
         if extra.themeInput then extra.themeInput:ClearFocus() end
     end)
     window:SetScript("OnUpdate", function(_, elapsed)
+        if extra.emotesLocked and not extra.emotesCoolingDown() then extra.updateEmoteCooldown() end
         if extra.raidPortraitsActive then
             extra.portraitTick=(extra.portraitTick or 0)+elapsed
             if extra.portraitTick>=2 then
