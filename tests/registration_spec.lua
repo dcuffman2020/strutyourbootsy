@@ -237,7 +237,7 @@ icon:close()
 assert(#bytes == 18 + 64 * 64 * 4 and bytes:byte(3) == 2)
 assert(bytes:byte(13) == 64 and bytes:byte(15) == 64 and bytes:byte(17) == 32 and bytes:byte(18) == 8)
 assert(bytes:byte(22) == 0 and bytes:byte(22 + (64 * 32 + 32) * 4) > 245)
-for _,asset in ipairs({"ArmoryClose","ArmoryTrim","ArmoryStarOn","ArmoryStarOff"}) do
+for _,asset in ipairs({"ArmoryClose","ArmoryTrim","ArmoryStarOn","ArmoryStarOff","SnowglowFlake"}) do
     local f=assert(io.open("Assets/"..asset..".tga","rb"))
     local b=f:read("*a");f:close()
     assert(b:byte(3)==2 and b:byte(17)==32 and #b==18+b:byte(13)*b:byte(15)*4)
@@ -252,6 +252,7 @@ local footerText=("v%s  ·  Published %s  ·  Made by Herukas"):format(tocMetada
 local footer
 for _,item in ipairs(window.labels) do if item:GetText()==footerText then footer=item end end
 assert(footer and footer.anchor[1]=="BOTTOMRIGHT" and footer.anchor[2]==window and footer.wordWrap==false)
+assert(footer.anchor[3]=="BOTTOMRIGHT" and footer.anchor[4]==-39 and footer.anchor[5]==11)
 local header=assert(solo.find("−")).parent
 local bar=solo.env.SYBMinimizedBar
 assert(not window.scripts.OnDragStart and not bar:IsShown())
@@ -343,7 +344,7 @@ local function assertEmoteGrid(client)
             rows[y]=(rows[y] or 0)+1
         end
     end
-    assert(#labels==20 and drawer.parent.height==200 and client.env.SYBAdminWindow.height==589)
+    assert(#labels==20 and drawer.parent.height==200 and client.env.SYBAdminWindow.height==601)
     assert(rows[-6]==5 and rows[-31]==5 and rows[-56]==5 and rows[-81]==5)
     assert(table.concat(labels,",",1,5)=="Bow,Wave,Dance,Flex,Chicken")
     return labels
@@ -636,9 +637,34 @@ assertWindowSkin(relaunched,14,21,29)
 assert(demo.click("Options") and demo.click("Appearance: Neon Circuit") and demo.click("Tournament Armory"))
 assert(demo.click("Apply theme") and demo.click("Cancel"))
 assertWindowSkin(demo,14,21,29)
+local function visibleFlakes(client)
+    local count=0
+    for _,texture in ipairs(client.env.SYBAdminWindow.textures) do
+        local path=rawget(texture,"texture")
+        if path and path:find("SnowglowFlake.tga",1,true) and texture:IsShown() then count=count+1 end
+    end
+    return count
+end
+assert(visibleFlakes(demo)==0)
+assert(demo.click("Options") and demo.click("Appearance: Tournament Armory") and demo.click("Snowglow Lodge"))
+assertWindowSkin(demo,16,31,39)
+assert(visibleFlakes(demo)==3 and saved.appearance=="armory")
+assert(demo.find("✓  Snowglow Lodge") and demo.click("Cancel"))
+assert(visibleFlakes(demo)==0)
+assert(demo.click("Appearance: Tournament Armory") and demo.click("Snowglow Lodge") and demo.click("Apply theme"))
+assert(saved.appearance=="snowglow" and saved.highContrast==true)
+assert(demo.click("Cancel") and visibleFlakes(demo)==3)
+local winterReload=makeClient()
+winterReload.env.SYBCharacterDB={preferences={appearance=saved.appearance}}
+winterReload.event("PLAYER_LOGIN")
+winterReload.slash("")
+assertWindowSkin(winterReload,16,31,39)
+assert(visibleFlakes(winterReload)==3)
+assert(demo.click("Options") and demo.click("Appearance: Snowglow Lodge") and demo.click("Tournament Armory"))
+assert(demo.click("Apply theme") and demo.click("Cancel") and visibleFlakes(demo)==0)
 assert(#packets==0 and #demo.warnings==0,"Appearance changes must stay on the local client.")
 local setup=assert(demo.find("Setup Contest"))
-assert(setup.anchor[3]=="BOTTOMLEFT" and setup.anchor[5]==48 and setup.caption.width==128)
+assert(setup.anchor[3]=="BOTTOMLEFT" and setup.anchor[5]==60 and setup.caption.width==128)
 assert(demo.click("Setup Contest") and demo.click("5") and demo.click("Cancel"))
 assert(demo.click("Setup Contest"))
 assert(demo.click("1"))
@@ -708,7 +734,7 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         assertLabel(demo,"Practice: "..choices[6].." selected. Nothing was sent to WoW.")
         assert(#demo.emotes==0)
         assert(demo.click("Emotes −") and not demo.click("Chicken"))
-        assert(demo.env.SYBAdminWindow.height==564)
+        assert(demo.env.SYBAdminWindow.height==576)
         assert(demo.click("Emotes +"))
         assert(table.concat(choices)==table.concat(assertEmoteGrid(demo)) and demo.emoteDraws==15)
         assert(demo.click("Host view") and not demo.click("Emotes +"))

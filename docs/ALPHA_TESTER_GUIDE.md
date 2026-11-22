@@ -9,7 +9,7 @@ This is a private test build. Live raid play still ends at the runway. Solo prac
 
 ## Personalize the addon
 
-Open **Options → Appearance**. Select **Tournament Armory**, **Goldleaf Grimoire**, **Studio Modern**, or **Neon Circuit** to preview it immediately on the live window. The swatches identify each look; the checkmark shows what you are previewing. **Apply theme** saves this character’s appearance and returns to Options. **Cancel** or closing the window discards an unapplied preview. Appearance is client-only and separate from the contest theme. High contrast and other interface settings still work with every skin.
+Open **Options → Appearance**. Select **Tournament Armory**, **Goldleaf Grimoire**, **Studio Modern**, **Neon Circuit**, or **Snowglow Lodge** to preview it immediately on the live window. The swatches identify each look; the checkmark shows what you are previewing. **Apply theme** saves this character’s appearance and returns to Options. **Cancel** or closing the window discards an unapplied preview. Appearance is client-only and separate from the contest theme. High contrast and other interface settings still work with every skin.
 
 ## Watch the runway without the full window
 

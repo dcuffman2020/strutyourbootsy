@@ -30,8 +30,8 @@ local medals={
 }
 -- Semantic roles are updated in place so existing controls repaint without being rebuilt.
 local skins={
-    order={"armory","goldleaf","modern","neon"}, frames={}, type={}, swatches={}, names={
-        armory="Tournament Armory", goldleaf="Goldleaf Grimoire", modern="Studio Modern", neon="Neon Circuit",
+    order={"armory","goldleaf","modern","neon","snowglow"}, footerPadding=12, frames={}, type={}, swatches={}, names={
+        armory="Tournament Armory", goldleaf="Goldleaf Grimoire", modern="Studio Modern", neon="Neon Circuit", snowglow="Snowglow Lodge",
     },
     defs={
         armory={window=0x0E151D,panel=0x151F2A,outline=0x435364,header=0x411628,cta=0x751E35,
@@ -46,6 +46,9 @@ local skins={
         neon={window=0x080F1C,panel=0x0F1B2D,outline=0x4E688B,header=0x122039,cta=0x00525E,
             selected=0x56254E,tag=0x172541,trim=0x365377,success=0xB5FCA0,info=0xA8DFFF,
             gold=0x58EAFF,pale=0xEDF5FF,muted=0xB2C7E8,display="Fonts\\ARIALN.TTF",plain=true,medals={0xF4BD68,0xC5D7E9,0x925D3F},hot=0xFF71C9},
+        snowglow={window=0x101F27,panel=0x192F37,outline=0x628B95,header=0x234C45,cta=0x2A594A,
+            selected=0x34535D,tag=0x24434E,trim=0x7898A3,success=0xBCECC2,info=0xC5EDF9,
+            gold=0xFFD58D,pale=0xF4FAFF,muted=0xC5DEE7,medals={0xE6BE74,0xCEDDE8,0x905B3E}},
     },
 }
 skins.tokens={gold=gold,pale=pale,muted=muted}
@@ -392,7 +395,7 @@ local function updateEmoteDrawer(p)
     extra.emoteToggle:SetShown(key~=nil)
     extra.emoteToggle:SetText(extra.emoteOpen and "Emotes −" or "Emotes +")
     local expanded=key~=nil and extra.emoteOpen==true
-    window:SetHeight(expanded and 589 or 564)
+    window:SetHeight((expanded and 589 or 564)+skins.footerPadding)
     if expanded then info:SetHeight(200) end
     extra.emoteDrawer:SetShown(expanded)
     extra.emoteNote:SetText(extra.emoteFeedback or (p.preview and "Practice only. Emotes won’t play in WoW." or "Choose an emote to perform it."))
@@ -416,8 +419,19 @@ function skins.buildChrome(trim,jewel)
             bars[#bars+1]=b
         end
     end
+    local flakes={}
+    for i,x in ipairs({-20,0,20}) do
+        local t=window:CreateTexture(nil,"OVERLAY")
+        local size=i==2 and 16 or 10
+        t:SetSize(size,size)
+        t:SetPoint("CENTER",trim,"CENTER",x,0)
+        t:SetTexture(assetPath.."SnowglowFlake.tga")
+        flakes[i]=t
+    end
     skins.paintChrome=function(key,d)
-        trim:SetColorTexture(gold[1],gold[2],gold[3],.65)
+        local rule=key=="snowglow" and palette.info or gold
+        trim:SetColorTexture(rule[1],rule[2],rule[3],.65)
+        for _,t in ipairs(flakes) do t:SetShown(key=="snowglow") end
         jewel:SetShown(key=="armory" or key=="goldleaf")
         for _,t in ipairs(leaf) do t:SetShown(key=="goldleaf") end
         local hot=rgb(d.hot or d.gold)
@@ -488,7 +502,7 @@ function extra.addReleaseFooter()
     parts[#parts+1]="Made by "..(author and author~="" and author or "Herukas")
     local footer=label(window,table.concat(parts,"  ·  "),10,0,0,muted,390)
     footer:ClearAllPoints()
-    footer:SetPoint("BOTTOMRIGHT",window,"BOTTOMRIGHT",-39,5)
+    footer:SetPoint("BOTTOMRIGHT",window,"BOTTOMRIGHT",-39,11)
     footer:SetJustifyH("RIGHT")
     footer:SetWordWrap(false)
     footer:SetMaxLines(1)
@@ -496,7 +510,7 @@ end
 
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
-    window:SetSize(465, 564)
+    window:SetSize(465, 564+skins.footerPadding)
     window:SetPoint("CENTER")
     window:SetFrameStrata("DIALOG")
     window:SetMovable(true)
@@ -576,17 +590,17 @@ local function build()
     actionNotice=label(window,"",12,25,-445,muted,415)
     status=label(window,"",13,25,-474,gold,415)
     actionNotice:ClearAllPoints()
-    actionNotice:SetPoint("TOPLEFT",window,"BOTTOMLEFT",25,119)
+    actionNotice:SetPoint("TOPLEFT",window,"BOTTOMLEFT",25,119+skins.footerPadding)
     status:ClearAllPoints()
-    status:SetPoint("TOPLEFT",window,"BOTTOMLEFT",25,90)
+    status:SetPoint("TOPLEFT",window,"BOTTOMLEFT",25,90+skins.footerPadding)
     local trim=window:CreateTexture(nil,"ARTWORK")
     trim:SetColorTexture(gold[1],gold[2],gold[3],.6)
     trim:SetSize(417,1)
-    trim:SetPoint("TOPLEFT",window,"BOTTOMLEFT",24,60)
+    trim:SetPoint("TOPLEFT",window,"BOTTOMLEFT",24,60+skins.footerPadding)
     local jewel=window:CreateTexture(nil,"OVERLAY")
     jewel:SetTexture(assetPath.."ArmoryTrim.tga")
     jewel:SetSize(20,7)
-    jewel:SetPoint("TOP",window,"BOTTOM",0,63)
+    jewel:SetPoint("TOP",window,"BOTTOM",0,63+skins.footerPadding)
     skins.buildChrome(trim,jewel)
     extra.addReleaseFooter()
     primary = button(window, "Open registration", 152, 285, -516, function()
@@ -653,7 +667,7 @@ local function build()
     end)
     for _,entry in ipairs({{primary,285},{secondary,28},{confirmPassive,135},{skipPrep,135},{utility,135}}) do
         entry[1]:ClearAllPoints()
-        entry[1]:SetPoint("TOPLEFT",window,"BOTTOMLEFT",entry[2],48)
+        entry[1]:SetPoint("TOPLEFT",window,"BOTTOMLEFT",entry[2],48+skins.footerPadding)
     end
     prefsLink=button(windowHeader,"Options",98,277,-5,openPreferences)
     prefsLink:SetHeight(20)
