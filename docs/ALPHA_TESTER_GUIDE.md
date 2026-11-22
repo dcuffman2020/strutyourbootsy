@@ -17,7 +17,7 @@ This is a private test build. Live raid play still ends at the runway. Solo prac
 6. In the lobby, **Theme...** opens a text editor. **Use theme** saves the typed name for this contest; **Random theme** returns to automatic selection. The name stays hidden from contestants until **Start contest**. **Runway timer** sets the per-turn duration before starting.
 7. In **Setup Contest**, the highlighted round updates the summary. The selected custom theme appears first above the preset options. Click the highlighted row or **Edit theme** to change the name.
 8. Choose **View as** in the practice header and pick a fictional contestant. This read-only view shows their side of the current phase, with the same timer and current/next turns but no host controls. **Host view** returns you without changing the contest. Try switching views before and after the reveal.
-9. Preview the contestant who is presenting and open **Emotes +**. Try **Bow**, **Wave**, **Dance**, **Flex**, or **Chicken**. Practice shows feedback but does not perform a game emote. A contestant who is merely up next should not see the picker.
+9. Preview the contestant who is presenting and open **Emotes +**. The top row is always **Bow**, **Wave**, **Dance**, **Flex**, and **Chicken**. The other 11 slots are sampled from the runway emote pool without repeats. Close and reopen the panel during the same turn to verify the choices stay put; a new turn loads a fresh draw. Practice shows feedback but does not perform a game emote. A contestant who is merely up next should not see the picker.
 
 ## Next group test
 

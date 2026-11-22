@@ -70,7 +70,13 @@ local function makeClient(index)
     env.GameTooltip_Hide = function() end
     env.STANDARD_TEXT_FONT = "Font"
     env.DEFAULT_CHAT_FRAME = {AddMessage=function(_, text) client.chat[#client.chat + 1] = text end}
-    env.math = setmetatable({random=function() return (index or 0) / 10 end}, {__index=math})
+    env.math = setmetatable({random=function(lo,hi)
+        if lo then
+            client.emoteDraws=(client.emoteDraws or 0)+1
+            return client.reverseEmoteDraw and hi or lo
+        end
+        return (index or 0) / 10
+    end}, {__index=math})
     env.GetTime, env.GetServerTime = function() return now end, function() return 1700000000 + now end
     env.GetCursorPosition = function() return 180, 110 end
     env.GetNormalizedRealmName = function() return "Realm" end
@@ -234,6 +240,26 @@ local function assertLabel(client, text)
         end
     end
     error("Missing UI label: " .. text)
+end
+
+local function assertEmoteGrid(client)
+    local drawer=assert(client.find("Bow")).parent
+    local labels,seen,rows={},{},{}
+    for _,control in ipairs(client.frames) do
+        if rawget(control,"parent")==drawer and control.shown then
+            local name=control:GetText()
+            local x,y=control.anchor[2],control.anchor[3]
+            assert(name~="" and not seen[name], "Duplicate or empty emote button")
+            assert(x>=0 and x+control.width<=drawer.width and -y+control.height<=drawer.height)
+            seen[name]=true
+            labels[#labels+1]=name
+            rows[y]=(rows[y] or 0)+1
+        end
+    end
+    assert(#labels==16)
+    assert(rows[-6]==5 and rows[-31]==6 and rows[-56]==5)
+    assert(table.concat(labels,",",1,5)=="Bow,Wave,Dance,Flex,Chicken")
+    return labels
 end
 
 -- A previous transport error must not conceal today's Start blocker.
@@ -406,8 +432,11 @@ for j,name in ipairs(order) do
         assert(presenter.click("Emotes +") and presenter.click("Bow"))
         assert(presenter.emotes[1]=="BOW" and #presenter.emotes==1)
         assertLabel(presenter,"Performed Bow.")
+        local choices=assertEmoteGrid(presenter)
+        assert(presenter.click(choices[6]) and presenter.emotes[2]==choices[6]:upper())
+        assert(#presenter.emotes==2)
         presenter.blockEmote=true
-        assert(presenter.click("Chicken") and #presenter.emotes==1)
+        assert(presenter.click("Chicken") and #presenter.emotes==2)
         assertLabel(presenter,"Emote unavailable. Try your usual chat command.")
         presenter.blockEmote=false
         roster[3].online=false; leader.event("GROUP_ROSTER_UPDATE")
@@ -500,10 +529,15 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         assertLabel(demo,"Turn 2:00")
         assert(demo.click("View as") and demo.click("Valeweaver"))
         assertLabel(demo,"You’re presenting now.")
-        assert(demo.click("Emotes +") and demo.click("Chicken"))
-        assertLabel(demo,"Practice: Chicken selected. Nothing was sent to WoW.")
+        assert(demo.click("Emotes +"))
+        local choices=assertEmoteGrid(demo)
+        assert(demo.emoteDraws==11 and #demo.emotes==0)
+        assert(demo.click(choices[6]))
+        assertLabel(demo,"Practice: "..choices[6].." selected. Nothing was sent to WoW.")
         assert(#demo.emotes==0)
         assert(demo.click("Emotes −") and not demo.click("Chicken"))
+        assert(demo.click("Emotes +"))
+        assert(table.concat(choices)==table.concat(assertEmoteGrid(demo)) and demo.emoteDraws==11)
         assert(demo.click("Host view") and not demo.click("Emotes +"))
         assert(demo.click("View as") and demo.click("Mossmantle"))
         assert(not demo.click("Emotes +"))
@@ -520,6 +554,11 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         now=now+30
         assert(demo.click("Resume runway"));assertLabel(demo,"Presenting  1 of 5")
         assertLabel(demo,"Turn 1:45")
+    elseif j==2 then
+        demo.reverseEmoteDraw=true
+        assert(demo.click("View as") and demo.click("Mossmantle") and demo.click("Emotes +"))
+        assert(demo.emoteDraws==22 and assertEmoteGrid(demo)[6]=="Yawn")
+        assert(#demo.emotes==0 and demo.click("Host view"))
     end
     local found=false
     for _,f in ipairs(demo.frames) do if rawget(f,"text")==name .. "  ·  Presenting" and f.shown then found=true end end

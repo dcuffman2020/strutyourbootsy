@@ -240,6 +240,21 @@ local function presenting(p)
     return actor and actor==p.runway.current
 end
 
+local runwayFavorites={"Bow","Wave","Dance","Flex","Chicken"}
+local runwayEmotes={"Cheer","Clap","Cry","Gasp","Grin","Kneel","Laugh","Nod","Point","Purr","Roar",
+    "Salute","Shiver","Shrug","Sigh","Sit","Smile","Thank","Wink","Yawn"}
+
+local function loadRunwayEmotes()
+    local pool={}
+    for i,name in ipairs(runwayEmotes) do pool[i]=name end
+    for i=1,11 do
+        local j=math.random(i,#pool)
+        pool[i],pool[j]=pool[j],pool[i]
+        extra.emoteButtons[#runwayFavorites+i]:SetText(pool[i])
+    end
+    extra.emotesLoaded=true
+end
+
 local function buildEmoteDrawer()
     local function canChoose()
         return window:IsShown() and extra.emoteToggle:IsShown() and presenting(context.getProjection())
@@ -253,15 +268,24 @@ local function buildEmoteDrawer()
     extra.emoteToggle=button(info,"Emotes +",135,264,-8,function()
         if not (canChoose() or canPreview()) then return end
         extra.emoteOpen=not extra.emoteOpen
+        if extra.emoteOpen and not extra.emotesLoaded then loadRunwayEmotes() end
         if not extra.emoteOpen then extra.emoteFeedback=nil end
         UI.Refresh()
     end)
-    extra.emoteDrawer=panel(-72,66,palette.window,palette.trim,info,17,383)
-    extra.emoteNote=label(extra.emoteDrawer,"",11,8,-40,muted,367)
-    for i,text in ipairs({"Bow","Wave","Dance","Flex","Chicken"}) do
-        local name=text
-        button(extra.emoteDrawer,name,69,8+(i-1)*74,-7,function()
+    extra.emoteDrawer=panel(-68,100,palette.window,palette.trim,info,17,383)
+    extra.emoteNote=label(extra.emoteDrawer,"",11,8,-82,muted,367)
+    extra.emoteButtons={}
+    for i=1,16 do
+        local row,column,count
+        if i<=5 then row,column,count=0,i-1,5
+        elseif i<=11 then row,column,count=1,i-6,6
+        else row,column,count=2,i-12,5 end
+        local width=count==5 and 66 or 56
+        local start=math.floor((383-(count*width+(count-1)*6))/2)
+        local control=button(extra.emoteDrawer,runwayFavorites[i] or "",width,start+column*(width+6),-6-row*25,function(self)
             if not extra.emoteDrawer:IsShown() or not extra.emoteOpen then return end
+            local name=self:GetText()
+            if not name or name=="" then return end
             if canPreview() then
                 extra.emoteFeedback="Practice: "..name.." selected. Nothing was sent to WoW."
             elseif canChoose() then
@@ -273,6 +297,9 @@ local function buildEmoteDrawer()
             else return end
             UI.Refresh()
         end)
+        control:SetHeight(22)
+        control.caption:SetFont(STANDARD_TEXT_FONT,12)
+        extra.emoteButtons[i]=control
     end
 end
 
@@ -280,11 +307,13 @@ local function updateEmoteDrawer(p)
     local active=presenting(p) and not preferencesMode and not extra.viewPicker
     local key=active and table.concat({p.sessionId or "",p.round or 1,p.runway.index,p.runway.current},":") or nil
     if key~=extra.emoteTurn then
-        extra.emoteTurn,extra.emoteOpen,extra.emoteFeedback=key,nil,nil
+        extra.emoteTurn,extra.emoteOpen,extra.emoteFeedback,extra.emotesLoaded=key,nil,nil,nil
     end
     extra.emoteToggle:SetShown(key~=nil)
     extra.emoteToggle:SetText(extra.emoteOpen and "Emotes −" or "Emotes +")
-    extra.emoteDrawer:SetShown(key~=nil and extra.emoteOpen==true)
+    local expanded=key~=nil and extra.emoteOpen==true
+    if expanded then info:SetHeight(175) end
+    extra.emoteDrawer:SetShown(expanded)
     extra.emoteNote:SetText(extra.emoteFeedback or (p.preview and "Practice only. Emotes won’t play in WoW." or "Choose an emote to perform it."))
 end
 
