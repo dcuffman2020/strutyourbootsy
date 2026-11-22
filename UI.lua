@@ -104,6 +104,9 @@ local messages = {
     registration_pending="Wait for pending addon users to confirm their roles.",
     invalid_theme="Enter a valid theme name.",
     invalid_setting="Choose one of the listed options.",
+    not_eligible="Only registered contestants and spectators may vote.",
+    self_vote="You cannot vote for yourself.",
+    invalid_ballot="The ballot could not be read. Refresh and try again.",
     invalid_rating="Choose 1–5 stars for a contestant other than yourself.",
     empty_ballot="Choose at least one rating before submitting.",
     ballot_already_submitted="Your ballot has already been submitted.",
@@ -552,8 +555,8 @@ function extra.buildHelp()
 
     local sections={
         {"Get started","Type /syb or click the Bootsy minimap icon. Use the minus button to tuck the window away.",60},
-        {"Join or watch","Choose Contestant or Spectator and confirm. Use Emotes during your turn if you like.",60},
-        {"Contest rules","• Live contests must be run in a raid.\n• At least five contestants must register.\n• The raid leader is the contest official and cannot vote.\n• Contestants cannot vote for themselves.\nLive voting isn’t available in this alpha.",110},
+        {"Join or watch","Choose Contestant or Spectator and confirm. When voting opens, rate other contestants and submit.",60},
+        {"Contest rules","• Live contests must be run in a raid.\n• At least five contestants must register.\n• The raid leader is the contest official and cannot vote.\n• Contestants cannot vote for themselves.",110},
         {"Host a raid contest","Open registration and set a theme and prep time. Start once roles are confirmed. After prep, advance each runway turn.",67},
         {"Practice on your own","Outside a group, type /syb practice to try a contest and sample ballot with fictional players.",64},
         {"If you get stuck","Use Refresh to catch up. If Start contest is disabled, check the lobby message.",60},
@@ -682,6 +685,7 @@ local function build()
         if extra.themeInput then extra.themeInput:ClearFocus() end
     end)
     window:SetScript("OnUpdate", function(_, elapsed)
+        if extra.pendingVotePage then context.requestVotePage(extra.pendingVotePage) end
         if extra.emotesLocked and not extra.emotesCoolingDown() then extra.updateEmoteCooldown() end
         if extra.raidPortraitsActive then
             extra.portraitTick=(extra.portraitTick or 0)+elapsed
@@ -789,11 +793,13 @@ local function build()
                 return
             end
         end
+        if p.phase=="voting" then context.submitLiveBallot();return end
         if p.isLeader then
             if p.sessionId and p.phase == "registration" then context.start()
             elseif p.phase == "preparation" then context.beginRunway()
             elseif p.phase == "runway" then context.advanceRunway()
-            elseif p.phase == "runway_complete" and p.practice then context.restartPractice()
+            elseif p.phase == "runway_complete" then context.beginVoting()
+            elseif p.phase == "round_results" then context.endContest()
             else context.openRegistration() end
         else
             context.submitRole(p.submittedRole or selectedRole)
@@ -864,6 +870,9 @@ local function build()
     minimize:SetScript("OnLeave",GameTooltip_Hide)
     extra.buildMiniBar()
     extra.buildHelp()
+    extra.voteBack=button(overview,"Previous",88,13,-63,function() extra.votePage=extra.votePage-1;UI.Refresh() end)
+    extra.voteNext=button(overview,"Next",88,109,-63,function() extra.votePage=extra.votePage+1;UI.Refresh() end)
+    extra.votePageLabel=label(overview,"",12,212,-70,muted,128)
     votePanel=panel(-265,150,palette.panel,palette.outline)
     for i=1,5 do
         local row=panel(-5-(i-1)*28,27,palette.window,palette.outline,votePanel,5,407)
@@ -871,7 +880,8 @@ local function build()
         for n=1,5 do
             local choice=n
             local control=button(row,"",26,233+(choice-1)*30,-2,function()
-                if not extra.previewName then context.practiceAction("RATE",item.name,choice) end
+                if item.live and item.voteRow then context.rateLive(item.voteRow,choice)
+                elseif not extra.previewName then context.practiceAction("RATE",item.name,choice) end
             end)
             control:SetHeight(23)
             control.rating=choice
@@ -1147,6 +1157,8 @@ local function showBallot(p)
     votePanel:Show()
     local edits=false
     for i,row in ipairs(ratingRows) do
+        row.frame:Show()
+        row.live,row.voteRow=nil,nil
         row.name=p.runwayOrder[i]
         extra.bindPortrait(row.portrait,row.name)
         row.label:SetText(row.name==p.practiceVoter and (row.name.." · You (no self-rating)") or row.name)
@@ -1169,6 +1181,83 @@ local function showBallot(p)
     if closed then return "Voting is closed. Only submitted ratings will count." end
     if voteSubmitted then return "Ballot locked. Voting stays open until the timer ends." end
     return "Partial ballots are allowed. Select 1–5 stars; click again to clear."
+end
+
+function extra.showLiveVoting(p)
+    local result=p.phase=="round_results"
+    local remaining=not result and math.max(0,p.voteEndsAt-context.serverNow()) or 0
+    voteDeadline=remaining>0 and p.voteEndsAt or nil
+    local canVote=not result and p.voterEligible
+    local pages=math.ceil(p.voteTotal/context.votePageSize)
+    local key=p.sessionId..":"..p.phase
+    if extra.voteKey~=key then extra.voteKey,extra.votePage=key,1 end
+    local page=math.max(1,math.min(pages,extra.votePage))
+    extra.votePage=page
+    list:Hide()
+    details:SetText("")
+    roleHint:SetText("")
+    primary:Hide()
+    title:SetText(result and "Round results" or remaining==0 and "Voting has closed"
+        or p.isLeader and "Voting monitor" or p.voteSubmitted and "Ballot accepted" or "Rate contestants")
+    summary:SetText(result and "Aggregate scores · Two ratings needed to qualify."
+        or p.isLeader and "The raid leader officiates and does not vote."
+        or not canVote and "Only registered contestants and spectators can vote."
+        or p.voteSubmitted and "Your ballot is locked." or "Rate any number of contestants, then submit once.")
+    if not result then endOfTimer:SetText(clockText(remaining)) end
+    if not result and not canVote then
+        return remaining>0 and "Voting closes at the deadline." or "Waiting for round results…"
+    end
+    extra.voteBack:SetShown(page>1)
+    extra.voteNext:SetShown(page<pages)
+    extra.votePageLabel:SetShown(pages>1)
+    extra.votePageLabel:SetText(("Page %d of %d"):format(page,pages))
+    local rows=context.getVotePage(page)
+    if not rows then
+        extra.pendingVotePage=page
+        context.requestVotePage(page)
+    end
+    if result then
+        if p.isLeader then actionLabel(primary,"End contest") end
+        if not rows then return "Loading the round results…" end
+        local options={}
+        for _,entry in ipairs(rows) do
+            local name=entry.name or "Contestant unavailable"
+            options[#options+1]={name.." · "..(entry.score and ("%.2f / 5"):format(entry.score/100) or "Not qualified")}
+        end
+        optionRows(options)
+        return "Individual ballots aren’t displayed."
+    end
+    info:Hide()
+    votePanel:Show()
+    local actor=context.playerName()
+    for i,item in ipairs(ratingRows) do
+        local entry=rows and rows[i]
+        item.frame:SetShown(entry~=nil)
+        item.live,item.voteRow=true,entry
+        if entry then
+            item.name=entry.name or "Contestant unavailable"
+            local own=entry.name==actor
+            extra.bindPortrait(item.portrait,item.name,entry.guid)
+            item.label:SetText(item.name..(own and " · You" or ""))
+            for n,control in ipairs(item.stars) do
+                local value=p.ballot[entry.index] or 0
+                control.ratedName=item.name
+                control:SetShown(not own and entry.name~=nil)
+                control:SetEnabled(remaining>0 and not (p.voteSubmitted or p.ballotPending))
+                control.starTexture:SetTexture(assetPath..(n<=value and "ArmoryStarOn.tga" or "ArmoryStarOff.tga"))
+                decorate(control,n<=value and palette.selected or palette.panel,n<=value and gold or palette.outline)
+            end
+        end
+    end
+    if remaining>0 and not p.voteSubmitted and next(p.ballot) then
+        actionLabel(primary,p.ballotRetry and "Retry submission" or p.ballotPending and "Submitting…" or "Submit ballot",
+            not p.ballotPending or p.ballotRetry)
+    end
+    if remaining==0 then return "Waiting for the raid leader’s results…" end
+    if p.voteSubmitted then return "Ballot accepted. Voting stays open until the timer ends." end
+    if p.ballotPending then return p.ballotRetry and "No confirmation yet. Retry the same ballot." or "Waiting for ballot confirmation…" end
+    if not rows then return "Loading contestants…" end
+    return "Select 1–5 stars. Click the same star again to clear."
 end
 
 local function showResults(p)
@@ -1246,6 +1335,8 @@ function UI.Refresh()
     info:Show()
     info:SetHeight(150)
     votePanel:Hide()
+    extra.voteBack:Hide();extra.voteNext:Hide();extra.votePageLabel:Hide()
+    extra.pendingVotePage=nil
     utility:Hide()
     extra.themeButton:Hide()
     extra.timerButton:Hide()
@@ -1311,6 +1402,8 @@ function UI.Refresh()
         prompt="This is a read-only preview. No one else sees it."
     elseif p.wizard then
         prompt=showSettings(p)
+    elseif not p.practice and p.voteTotal and (p.phase=="voting" or p.phase=="round_results") then
+        prompt=extra.showLiveVoting(p)
     elseif p.practice and p.phase=="voting" then
         prompt=showBallot(p)
     elseif p.practice and p.phase=="round_results" then
@@ -1411,14 +1504,13 @@ function UI.Refresh()
     elseif p.phase == "runway_complete" and p.runway then
         title:SetText("Runway complete")
         summary:SetText(("%d of %d contestants presented."):format(p.runway.total,p.runway.total))
-        details:SetText(p.practice and "Voting is next" or "End of this live test build")
-        roleHint:SetText(p.practice and "Try an anonymous sample ballot with the fictional roster."
-            or "Live voting is not included yet. Use solo practice to try a ballot.")
+        details:SetText("Voting is next")
+        roleHint:SetText(p.practice and "Try a sample ballot with the fictional roster."
+            or p.isLeader and "Open voting when the raid is ready." or "Wait for the raid leader to open voting.")
         primary:SetText("Begin voting")
-        primary:SetShown(p.practice == true)
-        primary:SetEnabled(p.practice == true)
-        prompt = not p.practice and p.isLeader
-            and "Manual podium: /syb announce winners First Second Third" or ""
+        primary:SetShown(p.isLeader == true)
+        primary:SetEnabled(p.isLeader == true)
+        prompt=""
     else
         title:SetText("Welcome to the runway")
         summary:SetText((IsInRaid() and "In raid" or "Not in a raid. Join a raid to participate.") ..

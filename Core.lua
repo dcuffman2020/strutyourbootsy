@@ -128,7 +128,7 @@ function Core.SubmitBallot(state, voter, ratings)
     return true
 end
 
-function Core.CloseVoting(state)
+function Core.CloseVoting(state, minimumRatings)
     if state.phase ~= "voting" then return false, "wrong_phase" end
     local totals, counts = {}, {}
     for _, ratings in pairs(state.ballots[state.round]) do
@@ -139,7 +139,7 @@ function Core.CloseVoting(state)
     end
     state.scores[state.round] = {}
     for _, name in ipairs(state.order) do
-        if counts[name] then state.scores[state.round][name] = totals[name] / counts[name] end
+        if (counts[name] or 0) >= (minimumRatings or 1) then state.scores[state.round][name] = totals[name] / counts[name] end
     end
     state.phase = "round_results"
     state.version = state.version + 1

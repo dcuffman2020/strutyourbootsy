@@ -303,7 +303,7 @@ for _,topic in ipairs({"Strut Your Bootsy Help","Get started","Contest rules","H
 end
 for _,rule in ipairs({"Live contests must be run in a raid.","At least five contestants must register.",
     "The raid leader is the contest official and cannot vote.","Contestants cannot vote for themselves.",
-    "Live voting isn’t available in this alpha."}) do
+}) do
     assert(rules and rules:find(rule,1,true),rule.." missing from Contest rules")
 end
 assert(-solo.find("Got it").anchor[3]+solo.find("Got it").height<window.height)
@@ -687,7 +687,8 @@ end
 for _,member in ipairs(group) do
     assertLabel(member, "Runway complete")
     assertLabel(member, "5 of 5 contestants presented.")
-    assert(not member.click("Next contestant") and not member.click("Begin voting"))
+    assert(not member.click("Next contestant"))
+    if member~=leader then assert(not member.click("Begin voting")) end
 end
 leader.slash("practice")
 assert(leader.chat[#leader.chat]:find("Leave your party or raid",1,true))
@@ -706,6 +707,43 @@ leader.blockWarning=false
 leader.slash("announce winners Player3 Player4 Player5")
 leader.slash("announce winners Player4 Player3 Player5")
 assert(#leader.warnings==9 and leader.warnings[9]=="Congratulations to Player3-Realm Player4-Realm Player5-Realm!")
+advance(6)
+assert(leader.click("Begin voting")); deliver()
+assertLabel(leader,"Voting monitor")
+assert(not leader.find("Submit ballot"))
+for i=2,6 do assertLabel(group[i],"Rate contestants") end
+local function rateInLive(client,name,n)
+    for _,f in ipairs(client.frames) do
+        if rawget(f,"ratedName")==name and rawget(f,"rating")==n and f.enabled and f:IsShown() then
+            f.scripts.OnClick(f)
+            return true
+        end
+    end
+    return false
+end
+assert(not rateInLive(group[3],"Player3-Realm",5))
+assert(rateInLive(group[2],"Player3-Realm",5))
+assert(group[2].click("Next")); deliver()
+assert(rateInLive(group[2],"Player2-Realm",4)==false)
+assert(group[2].click("Previous")); deliver()
+assert(group[2].click("Submit ballot") and not group[2].click("Submit ballot")); deliver()
+assertLabel(group[2],"Ballot accepted")
+assert(rateInLive(group[4],"Player3-Realm",4) and group[4].click("Submit ballot")); deliver()
+assertLabel(group[4],"Ballot accepted")
+assert(rateInLive(group[3],"Player4-Realm",5) and group[3].click("Submit ballot")); deliver()
+advance(6) -- A burst-limited private confirmation is retried without resubmission.
+assertLabel(group[3],"Ballot accepted")
+assertLabel(leader,"Voting monitor")
+advance(53)
+assertLabel(leader,"Voting monitor")
+advance(1)
+for _,member in ipairs(group) do
+    assertLabel(member,"Round results")
+    assert(member.find("Player3-Realm · 4.50 / 5"))
+    assert(not member.find("Player4-Realm · 5.00 / 5"))
+end
+assert(leader.click("End contest")); deliver()
+assertLabel(group[2],"Welcome to the runway")
 roster, clients, packets = {}, {}, {}
 local demo = makeClient()
 demo.event("PLAYER_LOGIN")

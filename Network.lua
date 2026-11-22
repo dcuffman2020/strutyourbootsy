@@ -8,8 +8,8 @@ Network.__index = Network
 ns.Network = Network
 
 Network.PREFIX = "SYBDEV02"
-Network.SCHEMA = 5
-Network.CAPABILITY = "raid-comms-v5"
+Network.SCHEMA = 6
+Network.CAPABILITY = "raid-comms-v6"
 Network.PREPARATION_SECONDS = 120
 Network.PREPARATION_OPTIONS = {120,180,240,300}
 Network.PREPARATION_MAX = Network.PREPARATION_OPTIONS[#Network.PREPARATION_OPTIONS]
@@ -26,13 +26,14 @@ function Network.ValidRunwaySeconds(seconds)
     return false
 end
 Network.MAX_BYTES = 255
+Network.VOTING_SECONDS, Network.VOTE_PAGE_SIZE = 60, 4
 Network.DISCOVERY_SECONDS = 10
 Network.MAX_RECENT_COMMANDS = 128
 Network.SEND_BURST = 8
 Network.SEND_WINDOW = 5
 
-local knownTypes = { HELLO=true, WELCOME=true, STATE=true, CMD=true, ACK=true, REJECT=true, PING=true }
-local adminActions = { START=true, BEGIN_RUNWAY=true, PAUSE=true, RESUME=true, ADVANCE=true, END=true }
+local knownTypes = { HELLO=true, WELCOME=true, STATE=true, CMD=true, ACK=true, REJECT=true, PING=true, PAGE_REQ=true, PAGE=true }
+local adminActions = { START=true, BEGIN_RUNWAY=true, PAUSE=true, RESUME=true, ADVANCE=true, END=true, BEGIN_VOTING=true, CLOSE_VOTING=true }
 local rejectReasons = {
     admin_cannot_participate=true, already_registered=true, disconnected=true,
     duplicate_result=true, identity_mismatch=true, invalid_ack=true,
@@ -44,6 +45,8 @@ local rejectReasons = {
     unknown_command=true, unknown_command_id=true, unauthorized_sender=true,
     unsupported_client=true, wrong_channel=true, wrong_phase=true,
     late_joiner=true, pending_addon_users=true, insufficient_contestants=true, discovery_pending=true,
+    voting_closed=true, not_eligible=true, admin_cannot_vote=true, self_vote=true,
+    ballot_already_submitted=true, invalid_ballot=true, empty_ballot=true,
     registration_closed=true, minimum_five_contestants=true, registration_pending=true,
     invalid_runway_order=true, preparation_unavailable=true, preparation_running=true,
 }
@@ -124,9 +127,11 @@ end
 
 local allowedFields = {
     HELLO={capability=true}, PING={session_id=true, version=true},
-    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true},
-    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true},
-    CMD={session_id=true, command_id=true, expected_version=true, action=true, role=true},
+    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true, vote_ends=true, vote_total=true, voted=true},
+    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true, vote_ends=true, vote_total=true},
+    CMD={session_id=true, command_id=true, expected_version=true, action=true, role=true, ratings=true},
+    PAGE_REQ={session_id=true,version=true,page=true},
+    PAGE={session_id=true,version=true,page=true,rows=true},
     ACK={session_id=true, command_id=true, version=true, reason=true},
     REJECT={session_id=true, command_id=true, version=true, reason=true},
 }
@@ -151,7 +156,7 @@ local function validateFields(message)
     if not allowed then return false, "unknown_command" end
     for key, value in pairs(message) do
         if key ~= "type" and key ~= "schema" and not allowed[key] then return false, "malformed_payload" end
-        if type(value) == "string" and #value > 80 then return false, "malformed_payload" end
+        if type(value) == "string" and #value > (key=="rows" and 148 or 80) then return false, "malformed_payload" end
     end
     if message.type == "HELLO" and message.capability ~= Network.CAPABILITY then return false, "unsupported_client" end
     if message.type == "PING" and (not message.session_id or not message.version) then return false, "malformed_payload" end
@@ -183,6 +188,25 @@ local function validateFields(message)
             return false, "malformed_payload"
         end
     end
+    if message.type=="WELCOME" or message.type=="STATE" then
+        local voting=message.phase=="voting"
+        local summary=voting or message.phase=="round_results"
+        if summary then
+            local total=integer(message.vote_total,5)
+            if not total or total>39 or (voting and not integer(message.vote_ends,1))
+                or (not voting and message.vote_ends) or (message.voted and message.voted~="1") then
+                return false,"malformed_payload"
+            end
+        elseif message.vote_total or message.vote_ends or message.voted then return false,"malformed_payload" end
+    end
+    if message.type=="PAGE" or message.type=="PAGE_REQ" then
+        local page=integer(message.page,1)
+        if not page or page>math.ceil(39/Network.VOTE_PAGE_SIZE) or not message.session_id
+            or not integer(message.version,1) or (message.type=="PAGE" and not message.rows) then
+            return false,"malformed_payload"
+        end
+    end
+    if message.type=="CMD" and (message.action=="VOTE")~=(message.ratings~=nil) then return false,"malformed_payload" end
     if message.type == "CMD" and (not message.session_id or not message.command_id or
        not message.expected_version or not message.action) then return false, "malformed_payload" end
     if (message.type == "ACK" or message.type == "REJECT") and
@@ -330,6 +354,10 @@ function Network:StartContest(commandId)
 end
 
 local function stateFields(self, msg)
+    if self.voting and (self.phase=="voting" or self.phase=="round_results") then
+        msg.vote_total=self.voting.total
+        if self.phase=="voting" then msg.vote_ends=self.voting.endsAt end
+    end
     local prep, r = self.preparation, self.runway
     msg.theme, msg.prep_ends = prep and prep.theme, prep and prep.endsAt
     if r then msg.pos,msg.total,msg.cur,msg.nxt,msg.run_ends=r.index,r.total,r.current,r.upcoming,r.endsAt end
@@ -340,7 +368,7 @@ end
 -- Poll/WELCOME provides eventual recovery if this packet is missed.
 function Network:BroadcastContest()
     if not self:IsAuthority() or self.originalLeader ~= self.leader then return false, "not_authority" end
-    if not self.preparation and not self.runway then return false, "wrong_phase" end
+    if not self.preparation and not self.runway and not self.voting and self.phase~="ended" then return false, "wrong_phase" end
     return self:Send(stateFields(self,{type="STATE", session_id=self.sessionId, version=self.version, phase=self.phase}), "RAID")
 end
 
@@ -359,6 +387,7 @@ function Network:StartSession(sessionId)
     self.sessionId, self.version, self.phase = sessionId, 1, "registration"
     self.originalLeader = self.leader
     self.discoveryStarted, self.lastRejected, self.preparation, self.runway, self.contestantGuids = nil, nil, nil, nil, nil
+    self.voting,self.votePages,self.voted,self.sentVotePages=nil,{},nil,{}
     self.runwaySeconds=Network.RUNWAY_SECONDS
     self.preparationSeconds=Network.PREPARATION_SECONDS
     self.absent = {}
@@ -381,6 +410,7 @@ end
 function Network:EndSession(reason)
     if not self.sessionId then return false, "no_session" end
     self.phase, self.preparation, self.runway, self.contestantGuids = "ended", nil, nil, nil
+    self.voting,self.votePages,self.voted=nil,{},nil
     self.version = self.version + 1
     self:_emit("session_ended", { reason=reason, sessionId=self.sessionId, version=self.version })
     return true
@@ -446,6 +476,33 @@ function Network:_remember(commandId, result)
     end
 end
 
+-- Votes do not bump the shared state revision. If simultaneous ballots fill
+-- the transport budget, retry private confirmations on that same revision.
+function Network:_confirmVote(sender,id,version)
+    local session=self.sessionId
+    local ack={type="ACK",session_id=session,command_id=id,reason="ok",version=version}
+    if self:Send(ack,"WHISPER",sender) or not self.api.after then return end
+    local queue=self.voteAckQueue
+    if not queue or queue.session~=session then
+        queue={session=session,items={}}
+        self.voteAckQueue=queue
+    end
+    queue.items[sender]={ack=ack,sender=sender}
+    if queue.scheduled then return end
+    local function flush()
+        if self.voteAckQueue~=queue or self.sessionId~=session or not self:IsAuthority() then return end
+        for player,item in pairs(queue.items) do
+            if self:Send(item.ack,"WHISPER",item.sender) then queue.items[player]=nil end
+        end
+        queue.attempts=(queue.attempts or 0)+1
+        queue.scheduled=next(queue.items)~=nil and queue.attempts<6
+        if queue.scheduled then self.api.after(Network.SEND_WINDOW+.25,flush)
+        else self.voteAckQueue=nil end
+    end
+    queue.scheduled=true
+    self.api.after(Network.SEND_WINDOW+.25,flush)
+end
+
 function Network:_handleCommand(message, sender)
     local id = message.command_id
     local replayKey = self.roster[sender].guid .. "\0" .. tostring(id)
@@ -453,11 +510,44 @@ function Network:_handleCommand(message, sender)
     if not self.sessionId or message.session_id ~= self.sessionId then return self:_reject(sender, id, "stale_session") end
     if self.recentCommands[replayKey] then
         local prior = self.recentCommands[replayKey]
-        self:Send({ type=prior.ok and "ACK" or "REJECT", session_id=self.sessionId,
-            command_id=id, reason=prior.reason or "ok", version=prior.version }, "WHISPER", sender)
+        if prior.vote then self:_confirmVote(sender,id,prior.version)
+        else
+            self:Send({ type=prior.ok and "ACK" or "REJECT", session_id=self.sessionId,
+                command_id=id, reason=prior.reason or "ok", version=prior.version }, "WHISPER", sender)
+        end
         return prior.ok, prior.reason or "duplicate_replayed"
     end
     local expected = integer(message.expected_version, 0)
+    if message.action=="VOTE" then
+        if not self.callbacks.onCommand then return self:_reject(sender,id,"unsupported_command") end
+        local vote=self.voting
+        local member=self.roster[sender]
+        if sender==self.leader then return self:_reject(sender,id,"admin_cannot_vote") end
+        if not vote or self.phase~="voting" or not self.api.serverNow or self.api.serverNow()>=vote.endsAt then
+            return self:_reject(sender,id,"voting_closed")
+        end
+        if vote.eligible[sender]~=member.guid then return self:_reject(sender,id,"not_eligible") end
+        if vote.accepted[member.guid] then return self:_reject(sender,id,"ballot_already_submitted") end
+        if expected~=self.version then return self:_reject(sender,id,"snapshot_mismatch") end
+        local wire=message.ratings
+        if type(wire)~="string" or #wire~=vote.total or wire:find("[^0-5]") then return self:_reject(sender,id,"invalid_ballot") end
+        local ratings={}
+        for i,name in ipairs(vote.order) do
+            local value=tonumber(wire:sub(i,i))
+            if value>0 then
+                if name==sender then return self:_reject(sender,id,"self_vote") end
+                ratings[name]=value
+            end
+        end
+        if not next(ratings) then return self:_reject(sender,id,"empty_ballot") end
+        local ok,reason=self.callbacks.onCommand("VOTE",sender,{ratings=ratings})
+        if not ok then return self:_reject(sender,id,reason) end
+        vote.accepted[member.guid]=true
+        self:_remember(replayKey,{ok=true,version=self.version,vote=true})
+        self:_confirmVote(sender,id,self.version)
+        self:_emit("ballot_accepted",{})
+        return true
+    end
     if expected ~= self.version then return self:_reject(sender, id, "snapshot_mismatch") end
     local action = message.action
     if not action or (not adminActions[action] and action ~= "ROLE") then return self:_reject(sender, id, "unknown_command") end
@@ -484,6 +574,11 @@ function Network:_handleCommand(message, sender)
         if self.roster[sender].joinedAfterStart then return self:_reject(sender, id, "late_joiner") end
         if message.role ~= "contestant" and message.role ~= "spectator" then return self:_reject(sender, id, "invalid_role") end
     end
+    if action=="BEGIN_VOTING" and (self.phase~="runway_complete" or not self.api.serverNow) then return self:_reject(sender,id,"wrong_phase") end
+    if action=="CLOSE_VOTING" and (self.phase~="voting" or not self.voting or self.api.serverNow()<self.voting.endsAt) then
+        return self:_reject(sender,id,"wrong_phase")
+    end
+    if action=="END" and self.phase~="round_results" then return self:_reject(sender,id,"wrong_phase") end
     local preparation, frozen
     if action == "START" then
         local theme = self.callbacks.chooseTheme and self.callbacks.chooseTheme()
@@ -510,6 +605,23 @@ function Network:_handleCommand(message, sender)
         self.roster[sender].presence = "addon_ready"
     elseif action == "START" then
         self.phase, self.preparation, self.contestantGuids = "preparation", preparation, frozen
+    elseif action=="END" then
+        self.phase,self.voting,self.votePages,self.voted="ended",nil,{},nil
+    elseif action=="BEGIN_VOTING" then
+        local eligible={}
+        for name,m in pairs(self.roster) do
+            if name~=self.leader and m.role and not m.joinedAfterStart then eligible[name]=m.guid end
+        end
+        for name,m in pairs(self.absent) do
+            if name~=self.leader and m.role and not m.joinedAfterStart then eligible[name]=m.guid end
+        end
+        self.phase,self.runway="voting",nil
+        self.voting={endsAt=self.api.serverNow()+Network.VOTING_SECONDS,total=#turn,order=turn,eligible=eligible,accepted={}}
+        self.votePages={}
+    elseif action=="CLOSE_VOTING" then
+        self.phase="round_results"
+        self.voting.results=turn
+        self.votePages={}
     elseif action == "BEGIN_RUNWAY" or action == "ADVANCE" then
         local function guid(name) return name and self.contestantGuids[name] or nil end
         self.phase, self.preparation = turn.current and "runway" or "runway_complete", nil
@@ -525,6 +637,40 @@ function Network:_handleCommand(message, sender)
     return true
 end
 
+function Network:GetVotePage(page)
+    local vote=self.voting
+    if not vote then return nil end
+    if not self:IsAuthority() then return (self.votePages or {})[page] end
+    local result={}
+    local first=(page-1)*Network.VOTE_PAGE_SIZE+1
+    for i=first,math.min(first+Network.VOTE_PAGE_SIZE-1,vote.total) do
+        local item=vote.results and vote.results[i]
+        local name=item and item.name or vote.order[i]
+        result[#result+1]={guid=self.contestantGuids[name],index=i,score=item and item.score}
+    end
+    return #result>0 and result or nil
+end
+
+function Network:RequestVotePage(page)
+    if not self.voting or not self.sessionId then return false end
+    return self:Send({type="PAGE_REQ",session_id=self.sessionId,version=self.version,page=page},"WHISPER",self.leader)
+end
+
+-- Pages contain only the contestant roster or public aggregates. Broadcasting each
+-- requested page once serves simultaneous readers without one reply per voter.
+function Network:BroadcastVotePage(page)
+    local rows=self:GetVotePage(page)
+    if not rows or not self:IsAuthority() or self.originalLeader~=self.leader then return false end
+    local key=self.version..":"..page
+    self.sentVotePages=self.sentVotePages or {}
+    if self.sentVotePages[key] and self:_now()-self.sentVotePages[key]<2 then return true end
+    local parts={}
+    for _,r in ipairs(rows) do parts[#parts+1]=r.guid..":"..(r.score and tostring(r.score) or "0") end
+    local ok=self:Send({type="PAGE",session_id=self.sessionId,version=self.version,page=page,rows=table.concat(parts,",")},"RAID")
+    if ok then self.sentVotePages[key]=self:_now() end
+    return ok
+end
+
 function Network:Receive(prefix, wire, channel, sender)
     if prefix ~= Network.PREFIX then return false, "wrong_prefix" end
     if channel ~= "RAID" and channel ~= "WHISPER" then return false, "wrong_channel" end
@@ -536,11 +682,43 @@ function Network:Receive(prefix, wire, channel, sender)
     if not message then return self:_reject(sender, nil, reason) end
     local valid, validationReason = validateFields(message)
     if not valid then return self:_reject(sender, message.type == "CMD" and message.command_id or nil, validationReason) end
-    local raidPrepUpdate = channel == "RAID" and message.type == "STATE" and (message.phase == "preparation" or message.phase == "runway" or message.phase == "runway_complete")
-    if message.type ~= "HELLO" and channel ~= "WHISPER" and not raidPrepUpdate then
+    local raidPrepUpdate = channel == "RAID" and message.type == "STATE" and (message.phase == "preparation" or message.phase == "runway" or message.phase == "runway_complete" or message.phase=="voting" or message.phase=="round_results" or message.phase=="ended")
+    if message.type ~= "HELLO" and channel ~= "WHISPER" and not raidPrepUpdate and message.type~="PAGE" then
         return self:_reject(sender, message.type == "CMD" and message.command_id or nil, "wrong_channel")
     end
-    local preparation, runway
+    local preparation, runway, voting
+    if message.vote_total then
+        local endsAt=tonumber(message.vote_ends)
+        if endsAt and (not self.api.serverNow or endsAt>self.api.serverNow()+Network.VOTING_SECONDS+5) then
+            return self:_reject(sender,nil,"malformed_payload")
+        end
+        voting={endsAt=endsAt,total=tonumber(message.vote_total)}
+    end
+    if message.type=="PAGE" or message.type=="PAGE_REQ" then
+        if (self.phase~="voting" and self.phase~="round_results") or not self.voting or self.sessionId~=message.session_id or self.version~=tonumber(message.version) then return false,"stale_session" end
+        local page=tonumber(message.page)
+        if message.type=="PAGE_REQ" then
+            if not self:IsAuthority() or self.originalLeader~=self.leader then return false,"not_authority" end
+            return self:BroadcastVotePage(page)
+        end
+        if sender~=self.leader or sender~=self.originalLeader then return false,"unauthorized_sender" end
+        if self:IsAuthority() then return true end
+        local result,seen={},{}
+        local first=(page-1)*Network.VOTE_PAGE_SIZE+1
+        for part in (message.rows..","):gmatch("(.-),") do
+            local guid,score=part:match("^([%w%-]+):(%d+)$")
+            score=tonumber(score)
+            if not validGuid(guid) or seen[guid] or not score or (score~=0 and (score<100 or score>500))
+                or (self.phase=="voting" and score~=0) then return false,"malformed_payload" end
+            seen[guid]=true
+            result[#result+1]={guid=guid,index=first+#result,score=score~=0 and score or nil}
+        end
+        if #result~=math.min(Network.VOTE_PAGE_SIZE,self.voting.total-first+1) then return false,"malformed_payload" end
+        self.votePages=self.votePages or {}
+        self.votePages[page]=result
+        self:_emit("vote_page",{})
+        return true
+    end
     if message.pos then
         local endsAt=tonumber(message.run_ends)
         if endsAt and (not self.api.serverNow or endsAt>self.api.serverNow()+305) then
@@ -565,7 +743,8 @@ function Network:Receive(prefix, wire, channel, sender)
         if self:IsAuthority() and self.sessionId then
             return self:Send(stateFields(self,{ type="WELCOME", session_id=self.sessionId, version=self.version,
                 phase=self.phase, leader_guid=self.roster[self.leader].guid, role=member.role,
-                late=member.joinedAfterStart and 1 or nil }), "WHISPER", sender)
+                late=member.joinedAfterStart and 1 or nil,
+                voted=self.voting and self.voting.accepted[member.guid] and 1 or nil }), "WHISPER", sender)
         elseif sender == self.leader then
             return self:Send({ type="HELLO", capability=Network.CAPABILITY }, "WHISPER", self.leader)
         end
@@ -583,6 +762,9 @@ function Network:Receive(prefix, wire, channel, sender)
             self.sessionId, self.pending = nil, {}
         end
         if self.sessionId and version < self.version then return self:_reject(sender, nil, "stale_version") end
+        if self.sessionId~=message.session_id or version~=self.version then self.votePages,self.voted={},nil end
+        self.voting=voting
+        self.voted=self.voted or message.voted=="1"
         self.sessionId, self.version, self.phase = message.session_id, version, message.phase
         self.preparation, self.runway, self.originalLeader = preparation, runway, sender
         local me = self.roster[self.api.playerName()]
@@ -601,6 +783,17 @@ function Network:Receive(prefix, wire, channel, sender)
         if not pending then return self:_reject(sender, nil, "unknown_command_id") end
         local version = integer(message.version, 0)
         local expectedVersion = integer(pending.message.expected_version, 0)
+        if pending.message.action=="VOTE" then
+            if not version or not expectedVersion or version<expectedVersion or (message.type=="ACK" and version~=expectedVersion) then
+                return self:_reject(sender,nil,"invalid_result_version")
+            end
+            if pending.status~="pending" then return self:_reject(sender,nil,"duplicate_result") end
+            local accepted=message.type=="ACK" or message.reason=="ballot_already_submitted"
+            if accepted then self.voted=true end
+            pending.status,pending.reason=accepted and "acknowledged" or "rejected",message.reason
+            self:_emit("request_result",{commandId=message.command_id,status=pending.status,reason=pending.reason})
+            return accepted,message.reason
+        end
         if message.type == "ACK" then
             if message.reason ~= "ok" then return self:_reject(sender, nil, "invalid_ack") end
             if not version or not expectedVersion or version ~= expectedVersion + 1 then
@@ -629,6 +822,7 @@ function Network:Receive(prefix, wire, channel, sender)
         if sender == self.api.playerName() then return true end
         local version = integer(message.version, 0)
         if not version or version <= self.version or not validPhases[message.phase] then return self:_reject(sender, nil, "stale_version") end
+        self.voting,self.votePages=voting,{}
         self.version, self.phase, self.preparation, self.runway = version, message.phase, preparation, runway
         self:_emit("state_confirmed", self:GetProjection())
         return true

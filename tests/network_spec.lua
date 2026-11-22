@@ -62,7 +62,7 @@ assert(decoded == nil and malformedReason == "malformed_payload")
 local unknown, unknownReason = Network.Decode("t=EVIL|s="..Network.SCHEMA)
 assert(unknown == nil and unknownReason == "unknown_command")
 
-local old, oldReason = Network.Decode("t=HELLO|s=4|capability=raid-comms-v4")
+local old, oldReason = Network.Decode("t=HELLO|s=5|capability=raid-comms-v5")
 assert(not old and oldReason == "unsupported_client")
 assert(not leaderSent[#leaderSent].message:find("theme=", 1, true))
 
@@ -213,4 +213,49 @@ for _, packet in ipairs(memberSent) do
     assert(not packet.message:find("rating", 1, true))
 end
 
+-- Host-side ballot validation is authoritative even if a client bypasses its UI.
+roster={
+    {name="Leader-Realm",guid="Player-1",connected=true,leader=true},
+    {name="Member-Realm",guid="Player-2",connected=true},
+    {name="Quiet-Realm",guid="Player-3",connected=true},
+}
+local voterHost,voterWire=client("Leader-Realm")
+assert(voterHost:StartSession("voting-test"))
+voterHost.phase,voterHost.version="voting",9
+voterHost.voting={total=5,endsAt=1700000000+now+60,
+    order={"Member-Realm","A-Realm","B-Realm","C-Realm","D-Realm"},
+    eligible={["Member-Realm"]="Player-2"},accepted={}}
+local stored=0
+voterHost.callbacks.onCommand=function(action,sender,message)
+    assert(action=="VOTE" and sender=="Member-Realm" and message.ratings["A-Realm"]==5)
+    stored=stored+1
+    return true
+end
+local function vote(sender,command,ratings,channel)
+    return voterHost:Receive(Network.PREFIX,assert(Network.Encode({
+        type="CMD",action="VOTE",session_id="voting-test",expected_version=9,command_id=command,ratings=ratings
+    })),channel or "WHISPER",sender)
+end
+local function rejects(sender,command,ratings,reason,channel)
+    local ok,why=vote(sender,command,ratings,channel)
+    assert(not ok and why==reason,tostring(why))
+end
+rejects("Quiet-Realm","late","05000","not_eligible")
+rejects("Leader-Realm","host","05000","admin_cannot_vote")
+rejects("Member-Realm","self","55000","self_vote")
+rejects("Member-Realm","empty","00000","empty_ballot")
+rejects("Member-Realm","bad","06000","invalid_ballot")
+rejects("Member-Realm","broadcast","05000","wrong_channel","RAID")
+assert(vote("Member-Realm","accepted","05000"))
+assert(vote("Member-Realm","accepted","05000"))
+assert(stored==1 and voterHost.version==9)
+rejects("Member-Realm","second","05000","ballot_already_submitted")
+now=now+60
+rejects("Member-Realm","expired","05000","voting_closed")
+assert(Network.Encode({type="PAGE",session_id=string.rep("9",40),version=9999,page=10,
+    rows=table.concat({string.rep("1",32)..":500",string.rep("2",32)..":500",
+        string.rep("3",32)..":500",string.rep("4",32)..":500"},",")}))
+for _,packet in ipairs(voterWire) do
+    if packet.channel=="RAID" then assert(not packet.message:find("ratings=",1,true)) end
+end
 print("Network spec passed")

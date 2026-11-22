@@ -102,8 +102,15 @@ local function commandId()
     return ("%d-%d-%d"):format(GetServerTime(), math.floor(GetTime() * 1000), sequence)
 end
 
+local liveBallot={ratings={}}
+local votePageRequested={}
+local function resetLiveBallot()
+    liveBallot={ratings={}}
+    votePageRequested={}
+end
 local function onNetworkEvent(event, data)
     if event == "session_started" then
+        resetLiveBallot()
         raidCustomTheme=nil
         state = Core.New(data.leader, 1)
         notice = nil
@@ -111,6 +118,8 @@ local function onNetworkEvent(event, data)
         notice = "authority_changed"
     elseif event == "session_ended" and state then
         Core.End(state)
+    elseif event=="request_result" and liveBallot.id==data.commandId then
+        if data.status=="rejected" then notice=data.reason end
     elseif event == "request_result" and roleRequest and roleRequest.id == data.commandId then
         notice = data.status == "rejected" and data.reason or nil
         if data.reason == "snapshot_mismatch" then network:Poll() end
@@ -136,13 +145,32 @@ local function onNetworkCommand(action, sender, message)
         local ok, reason = operation(state)
         return ok, reason, ok and Core.RunwayStatus(state) or nil
     end
+    if action=="BEGIN_VOTING" then
+        local ok,reason=Core.BeginVoting(state)
+        return ok,reason,state.order
+    end
+    if action=="VOTE" then return Core.SubmitBallot(state,sender,message.ratings) end
+    if action=="CLOSE_VOTING" then
+        local ok,reason=Core.CloseVoting(state,2)
+        if not ok then return false,reason end
+        local results={}
+        local scores=state.scores[state.round]
+        for _,name in ipairs(state.order) do results[#results+1]={name=name,average=scores[name]} end
+        table.sort(results,function(a,b)
+            if a.average==b.average then return a.name<b.name end
+            return (a.average or 0)>(b.average or 0)
+        end)
+        for _,r in ipairs(results) do if r.average then r.score=math.floor(r.average*100+.5) end end
+        return true,nil,results
+    end
+    if action=="END" then return Core.End(state) end
     return false, "unsupported_command"
 end
 
 local function setupNetwork()
     if network then return true end
     local candidate = Network.New({
-        now=GetTime, serverNow=GetServerTime, playerName=playerName, localRealm=localRealm, getRoster=raidRoster,
+        now=GetTime, after=C_Timer.After, serverNow=GetServerTime, playerName=playerName, localRealm=localRealm, getRoster=raidRoster,
         newerSession=function(nextId, oldId)
             return tonumber(nextId) and tonumber(oldId) and tonumber(nextId) > tonumber(oldId)
         end,
@@ -434,6 +462,20 @@ local function view()
     if p.isLeader and state and p.runway then
         p.runwayOrder,p.runwayGuids=state.order,network.contestantGuids
     end
+    if liveBallot.session~=p.sessionId then
+        resetLiveBallot()
+        liveBallot.session=p.sessionId
+    end
+    local voting=network and network.voting
+    if voting and (p.phase=="voting" or p.phase=="round_results") then
+        p.voteEndsAt,p.voteTotal=voting.endsAt,voting.total
+        p.voteSubmitted=network.voted==true
+        p.voterEligible=not p.isLeader and p.localRole~=nil and p.lobbyState~="late_joiner" and p.lobbyState~="disconnected"
+        p.ballot=liveBallot.ratings
+        local request=liveBallot.id and network.pending[liveBallot.id]
+        p.ballotPending=request and request.status=="pending"
+        p.ballotRetry=p.ballotPending and GetTime()-(liveBallot.sent or 0)>=6
+    end
     p.notice = notice
     if not p.localRole and pending and pending.status == "pending" then
         p.submittedRole = pending.message.role
@@ -441,6 +483,63 @@ local function view()
         p.timedOut = not p.awaiting
     end
     return p
+end
+
+local function getVotePage(page)
+    local rows=network and network:GetVotePage(page)
+    if not rows then return end
+    local names={}
+    for name,member in pairs(network.roster) do names[member.guid]=name end
+    for name,member in pairs(network.absent) do names[member.guid]=name end
+    local display={}
+    for i,row in ipairs(rows) do
+        display[i]={guid=row.guid,index=row.index,name=names[row.guid],score=row.score}
+    end
+    return display
+end
+
+local function requestVotePage(page)
+    if not network or not network.voting or network:IsAuthority() then return end
+    local key=network.sessionId..":"..network.version..":"..page
+    if not votePageRequested[key] or GetTime()-votePageRequested[key]>=6 then
+        votePageRequested[key]=GetTime()
+        network:RequestVotePage(page)
+    end
+end
+
+local function rateLive(row, n)
+    local p=view()
+    if not p.voterEligible or p.phase~="voting" or p.voteSubmitted or p.ballotPending
+        or GetServerTime()>=p.voteEndsAt or not row.name or row.name==playerName() then return end
+    local page=math.ceil(row.index/Network.VOTE_PAGE_SIZE)
+    local rows=getVotePage(page)
+    local current=rows and rows[(row.index-1)%Network.VOTE_PAGE_SIZE+1]
+    if not current or current.guid~=row.guid then return end
+    liveBallot.ratings[row.index]=liveBallot.ratings[row.index]~=n and n or nil
+    notice=nil
+    UI.Refresh()
+end
+
+local function submitLiveBallot()
+    local p=view()
+    if not p.voterEligible or p.phase~="voting" or p.voteSubmitted or GetServerTime()>=p.voteEndsAt then return false,"voting_closed" end
+    local ok,reason
+    if p.ballotPending then
+        if not p.ballotRetry then return false end
+        ok,reason=network:Retry(liveBallot.id)
+    else
+        if not next(liveBallot.ratings) then return false,"empty_ballot" end
+        local ratings={}
+        for i=1,p.voteTotal do ratings[i]=tostring(liveBallot.ratings[i] or 0) end
+        local id=commandId()
+        ok,reason=network:Request("VOTE",id,{ratings=table.concat(ratings)})
+        if ok then liveBallot.id=id end
+    end
+    if ok then
+        liveBallot.sent=GetTime()
+        C_Timer.After(6,UI.Refresh)
+    end
+    return ok,reason
 end
 
 local function setPreparationSeconds(seconds)
@@ -543,11 +642,32 @@ local function adminAction(action)
         end
     end
     local id, version = network.sessionId, network.version
-    if not network:BroadcastContest() then
-        C_Timer.After(Network.SEND_WINDOW + 0.25, function()
-            if not practice and network.sessionId == id and network.version == version then network:BroadcastContest() end
-        end)
+    if action=="BEGIN_VOTING" then
+        phaseWarning("voting_open","Voting is open for 60 seconds.")
+        local function closeAtDeadline()
+            if not network or network.sessionId~=id or network.phase~="voting" or not network:IsAuthority() then return end
+            local remaining=network.voting.endsAt-GetServerTime()
+            if remaining>0 then C_Timer.After(remaining,closeAtDeadline) else run(adminAction,"CLOSE_VOTING") end
+        end
+        C_Timer.After(Network.VOTING_SECONDS,closeAtDeadline)
+    elseif action=="CLOSE_VOTING" then
+        local results=network.voting.results
+        local leaders={}
+        for _,r in ipairs(results) do
+            if r.average and r.average==results[1].average then leaders[#leaders+1]=r.name end
+        end
+        local names=table.concat(leaders,", ")
+        phaseWarning("voting_closed","Voting is closed. "..(#leaders==0 and "No contestant qualified."
+            or (#names<=165 and "Top score: "..names.."." or "See the tied leaders in the round results.")))
     end
+    local function publish()
+        if not practice and network.sessionId==id and network.version==version then
+            local ok=network:BroadcastContest()
+            if ok and network.voting then network:BroadcastVotePage(1) end
+            return ok
+        end
+    end
+    if not publish() then C_Timer.After(Network.SEND_WINDOW+0.25,publish) end
     return true
 end
 
@@ -599,6 +719,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
             openRegistration=function() run(openRegistration) end,
             start=function() run(adminAction,"START") end,
             beginRunway=function() run(adminAction,"BEGIN_RUNWAY") end,
+            beginVoting=function() run(adminAction,"BEGIN_VOTING") end,
+            endContest=function() run(adminAction,"END") end,
+            getVotePage=getVotePage, requestVotePage=requestVotePage, votePageSize=Network.VOTE_PAGE_SIZE,
+            rateLive=rateLive, submitLiveBallot=function() run(submitLiveBallot) end,
             advanceRunway=function() run(adminAction,"ADVANCE") end,
             leavePractice=leavePractice,
             restartPractice=function() leavePractice(); enterPractice() end,

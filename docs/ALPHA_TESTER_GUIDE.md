@@ -1,6 +1,6 @@
 # Strut Your Bootsy | Tournament Armory practice alpha
 
-This is a private test build. Live raid play still ends at the runway. Solo practice can configure rounds, pause/resume, cast a sample ballot, and review results. No practice actions affect your raid.
+This is a private test build. Live raid play includes one round, live voting, and aggregate results. Solo practice can configure rounds, pause/resume, cast a sample ballot, and review results. No practice actions affect your raid.
 
 ## Install
 
@@ -16,7 +16,7 @@ Click the **?** bubble in the addon header for quick instructions on hosting, jo
 - The raid leader is the contest official and cannot vote.
 - Contestants cannot vote for themselves.
 
-Live voting is not available in this alpha. You can try a sample ballot in solo practice.
+Testers can vote in a live raid or try a sample ballot in solo practice.
 
 ## Personalize the addon
 
@@ -44,15 +44,22 @@ Contestants see their own face portrait marked **YOU**. Registered contestant ro
 
 ## Next group test
 
-Use this same version on the raid leader and five confirmed contestants. Schema 5 does not mix with earlier builds. Open registration, wait for discovery, confirm all five, and click **Start contest**. Everyone should see the same theme and finish time. At expiry only the leader can begin and advance. The leader sees the full order; participants see the current and next contestant. Verify one consistent progression across all clients through **Runway complete**. During a live contestant’s turn, verify that one deliberate click performs one game emote and the picker vanishes after the leader advances. The current emote hook is covered by mocked client tests; confirm actual animation and layout in Retail. If a client misses an update, use **Refresh** to catch up. If Start is disabled, capture the reason or the `lobby:` value from `/syb status`.
+Use this same version on the raid leader and five confirmed contestants. Schema 6 does not mix with earlier builds. Open registration, wait for discovery, confirm all five, and click **Start contest**. Everyone should see the same theme and finish time. At expiry only the leader can begin and advance. The leader sees the full order; participants see the current and next contestant. Verify one consistent progression across all clients through **Runway complete**. During a live contestant’s turn, verify that one deliberate click performs one game emote and the picker vanishes after the leader advances. The current emote hook is covered by mocked client tests; confirm actual animation and layout in Retail. If a client misses an update, use **Refresh** to catch up. If Start is disabled, capture the reason or the `lobby:` value from `/syb status`.
 
 ## Raid Warnings
 
 This is a change from the PRD’s ordinary raid-chat channel. The live host sends one Raid Warning when registration opens or is cancelled, preparation opens (with the revealed theme), each contestant starts presenting, and the runway ends. The first contestant’s warning also announces that the runway has begun. Timer ticks, reconnects, and UI refreshes are silent. Practice previews these with a banner marked [Practice] and the game’s raid warning sound. It also previews voting opening and closing, round leaders, and the final congratulations after the last podium reveal.
 
-Live ballots and scoring are still out of scope for this alpha. After the live runway ends, the raid leader can announce an externally determined podium once with `/syb announce winners First Second Third`. Enter the three actual contestant names in finish order, with `-Realm` for ambiguous names. Only names from the completed runway are accepted. The warning reads “Congratulations to First Second Third!” Check the feature with an opted-in test raid; automated tests use mock chat, not the Retail client.
+## Vote in a live raid
 
-If a registered contestant disconnects, current alpha controls hold until they return. Full recovery is a separate milestone. If testing a second *live* contest, reload the group clients for a fresh test session. Do not send SavedVariables or account details with an error report.
+1. After **Finish runway**, the host clicks **Begin voting**. The 60-second timer starts for everyone.
+2. Registered contestants and spectators can rate other contestants using 1–5 stars. **Next** and **Previous** change pages without losing selections. The raid leader and late arrivals cannot vote. An omitted rating is not a zero.
+3. Click **Submit ballot** once and wait for **Ballot accepted**. If confirmation is delayed, **Retry submission** sends the same ballot. An accepted ballot cannot be changed. Individual votes are sent only to the host addon for tallying and aren’t shown in the UI or broadcast to the raid. This does not hide ballots from a modified host client.
+4. At time expiry, results show aggregate scores only. A contestant needs at least two valid ratings to qualify. The host can end the contest from the results screen. Live multi-round setup and the podium tie-break workflow are not part of this build.
+
+The host also announces voting opening and closing, including the top qualified score holder(s) when applicable. Verify the countdown, confirmation, and results on actual Retail clients during the next planned test.
+
+If a registered contestant disconnects, current alpha controls hold until they return. Full recovery is a separate milestone. Do not send SavedVariables or account details with an error report.
 
 ## Build information
 
