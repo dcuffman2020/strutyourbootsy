@@ -247,7 +247,7 @@ local function practiceView()
     end
     return {practice=true,isLeader=true,sessionId=practice.id,phase=c.phase,round=c.round,rounds=c.rounds,
         contestants=#demoNames,spectators=0,pendingResponses=0,members=practice.members,
-        lobbyState="ready_to_start",discoveryComplete=true,preparation=practice.preparation,prepLimit=practice.settings.prep,
+        lobbyState="ready_to_start",discoveryComplete=true,preparation=practice.preparation,preparationSeconds=practice.settings.prep,
         runway=turn,runwaySeconds=practice.runwaySeconds,runwayOrder=c.order,notice=notice,wizard=practice.wizard,
         settings=practice.wizardDraft or practice.settings,customTheme=(practice.wizardDraft or practice.settings).customTheme,ballot=practice.ballot,ballotSubmitted=practice.ballotSubmitted,
         voteEndsAt=practice.voteEndsAt,result=result,reveal=practice.reveal,revealCount=practice.revealCount,
@@ -265,7 +265,7 @@ local function enterPractice()
             members[#members+1]={name=name,guid=name,presence="addon_ready",role="contestant"}
         end
         practice={id="practice-"..practiceCounter,contest=c,members=members,ballot={},themePool={},
-            settings={rounds=1,theme="Random",prep=120,vote=60},runwaySeconds=Network.RUNWAY_SECONDS}
+            settings={rounds=1,theme="Random",prep=Network.PREPARATION_SECONDS,vote=60},runwaySeconds=Network.RUNWAY_SECONDS}
         practiceWarning("Registration is open. Use /syb to join.")
     end
     notice=nil
@@ -295,7 +295,7 @@ local function practiceAction(action, argument, value)
             else practice.wizard=practice.wizard+1 end
         elseif action=="SETTING" then
             local options=({[1]={rounds={1,2,3,4,5}},[2]={theme={"Random",unpack(alphaThemes)}},
-                [3]={prep={60,120,180}},[4]={vote={30,60,90}}})[practice.wizard]
+                [3]={prep={60,unpack(Network.PREPARATION_OPTIONS)}},[4]={vote={30,60,90}}})[practice.wizard]
             local valid=false
             for _,choice in ipairs(options and options[argument] or {}) do if choice==value then valid=true end end
             if not valid then return false,"invalid_setting" end
@@ -428,7 +428,9 @@ local function view()
         local ready, reason = Core.CanStart(state, p.pendingResponses + p.presence.unknown)
         if not ready then p.lobbyState = reason end
     end
-    if p.isLeader and p.phase=="registration" then p.customTheme=raidCustomTheme; p.runwaySeconds=network.runwaySeconds end
+    if p.isLeader and p.phase=="registration" then
+        p.customTheme,p.runwaySeconds,p.preparationSeconds=raidCustomTheme,network.runwaySeconds,network.preparationSeconds
+    end
     if p.isLeader and state and p.runway then
         p.runwayOrder,p.runwayGuids=state.order,network.contestantGuids
     end
@@ -439,6 +441,23 @@ local function view()
         p.timedOut = not p.awaiting
     end
     return p
+end
+
+local function setPreparationSeconds(seconds)
+    if not Network.ValidPreparationSeconds(seconds) and not (practice and seconds==60) then return false,"invalid_setting" end
+    if practice then
+        if grouped() or practice.contest.phase~="registration" or practice.wizard then return false,"wrong_phase" end
+        practice.settings.prep=seconds
+        return true
+    end
+    if not network then return false,"not_registered" end
+    network:RefreshRoster()
+    local p=network:GetProjection()
+    if not p.isLeader or p.phase~="registration" or network.originalLeader~=network.leader then
+        return false,"not_raid_leader"
+    end
+    network.preparationSeconds=seconds
+    return true
 end
 
 local function setRunwaySeconds(seconds)
@@ -568,7 +587,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         setupNetwork()
         UI.Initialize({
             getProjection=view, playerName=playerName, refresh=refresh, preferences=SYBCharacterDB.preferences,
-            serverNow=GetServerTime, preparationSeconds=Network.PREPARATION_SECONDS,
+            serverNow=GetServerTime, preparationMax=Network.PREPARATION_MAX,
+            preparationOptions=Network.PREPARATION_OPTIONS,setPreparationSeconds=setPreparationSeconds,
             normalizeTheme=Network.NormalizeCustomTheme,setCustomTheme=setCustomTheme,
             setRunwaySeconds=setRunwaySeconds,runwayOptions=Network.RUNWAY_OPTIONS,
             groupActive=grouped, enterPractice=function() run(enterPractice) end,

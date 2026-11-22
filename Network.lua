@@ -8,9 +8,16 @@ Network.__index = Network
 ns.Network = Network
 
 Network.PREFIX = "SYBDEV02"
-Network.SCHEMA = 4
-Network.CAPABILITY = "raid-comms-v4"
+Network.SCHEMA = 5
+Network.CAPABILITY = "raid-comms-v5"
 Network.PREPARATION_SECONDS = 120
+Network.PREPARATION_OPTIONS = {120,180,240,300}
+Network.PREPARATION_MAX = Network.PREPARATION_OPTIONS[#Network.PREPARATION_OPTIONS]
+
+function Network.ValidPreparationSeconds(seconds)
+    for _,value in ipairs(Network.PREPARATION_OPTIONS) do if seconds==value then return true end end
+    return false
+end
 Network.RUNWAY_SECONDS = 120
 Network.RUNWAY_OPTIONS = {30,60,120,180,300}
 
@@ -353,6 +360,7 @@ function Network:StartSession(sessionId)
     self.originalLeader = self.leader
     self.discoveryStarted, self.lastRejected, self.preparation, self.runway, self.contestantGuids = nil, nil, nil, nil, nil
     self.runwaySeconds=Network.RUNWAY_SECONDS
+    self.preparationSeconds=Network.PREPARATION_SECONDS
     self.absent = {}
     for name, member in pairs(self.roster) do
         member.role, member.joinedAfterStart = nil, false
@@ -481,7 +489,7 @@ function Network:_handleCommand(message, sender)
         local theme = self.callbacks.chooseTheme and self.callbacks.chooseTheme()
         local startedAt = self.api.serverNow and integer(self.api.serverNow(), 1)
         if not validTheme(theme) or not startedAt then return self:_reject(sender, id, "preparation_unavailable") end
-        preparation = {theme=theme, endsAt=startedAt + Network.PREPARATION_SECONDS}
+        preparation = {theme=theme, endsAt=startedAt + (self.preparationSeconds or Network.PREPARATION_SECONDS)}
         frozen = {}
         for name, member in pairs(self.roster) do
             if member.role == "contestant" then
@@ -545,7 +553,7 @@ function Network:Receive(prefix, wire, channel, sender)
         local endsAt = integer(message.prep_ends, 1)
         local serverTime = self.api.serverNow and self.api.serverNow()
         -- Tolerate modest server-clock skew, but not a countdown of arbitrary length.
-        if not serverTime or endsAt > serverTime + Network.PREPARATION_SECONDS + 5 then
+        if not serverTime or endsAt > serverTime + Network.PREPARATION_MAX + 5 then
             return self:_reject(sender, nil, "malformed_payload")
         end
         preparation = {theme=message.theme, endsAt=endsAt}

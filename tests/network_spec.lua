@@ -57,12 +57,12 @@ assert(member.sessionId == "session-1" and member.version == 1 and member.phase 
 assert(leader.roster["Member-Realm"].presence == "addon_pending")
 local huge, hugeReason = Network.Encode({type="HELLO", capability=string.rep("x", 255)})
 assert(huge == nil and hugeReason == "oversized_payload")
-local decoded, malformedReason = Network.Decode("t=CMD|s=4|broken")
+local decoded, malformedReason = Network.Decode("t=CMD|s="..Network.SCHEMA.."|broken")
 assert(decoded == nil and malformedReason == "malformed_payload")
-local unknown, unknownReason = Network.Decode("t=EVIL|s=4")
+local unknown, unknownReason = Network.Decode("t=EVIL|s="..Network.SCHEMA)
 assert(unknown == nil and unknownReason == "unknown_command")
 
-local old, oldReason = Network.Decode("t=HELLO|s=3|capability=raid-comms-v3")
+local old, oldReason = Network.Decode("t=HELLO|s=4|capability=raid-comms-v4")
 assert(not old and oldReason == "unsupported_client")
 assert(not leaderSent[#leaderSent].message:find("theme=", 1, true))
 
@@ -130,6 +130,8 @@ assert(not ok and reason == "malformed_payload")
 ok, reason = reveal({prep_ends=1700000900})
 assert(not ok and reason == "malformed_payload")
 assert(member.phase == "registration" and member.version == 3 and not member:GetProjection().preparation)
+for _,n in ipairs({120,180,240,300}) do assert(Network.ValidPreparationSeconds(n)) end
+for _,n in ipairs({60,121,301,360}) do assert(not Network.ValidPreparationSeconds(n)) end
 assert(reveal())
 assert(member.phase == "preparation" and member:GetProjection().preparation.theme == "Royalty")
 assert(member:GetProjection().preparation.endsAt == 1700000220)

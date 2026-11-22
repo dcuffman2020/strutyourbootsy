@@ -11,7 +11,6 @@ local preferencesMode, draftPreferences
 local extra={}
 local voteDeadline, voteExpiry, voteSubmitted
 local assetPath="Interface\\AddOns\\StrutYourBootsy\\Assets\\"
-local prepLimit
 local context = {}
 local rows = {}
 local selectedRole, selectedObserver, sessionId
@@ -283,7 +282,7 @@ end
 
 local function refreshPreparationClock()
     if not prepDeadline then return end
-    local remaining = math.min(prepLimit or context.preparationSeconds, math.max(0, prepDeadline - context.serverNow()))
+    local remaining = math.min(context.preparationMax, math.max(0, prepDeadline - context.serverNow()))
     local prefs=context.preferences
     endOfTimer:SetAlpha(not prefs.highContrast and not prefs.reduceMotion and remaining>0 and remaining<=5 and remaining%2==1 and .86 or 1)
     if remaining == prepSeconds then return end
@@ -308,8 +307,12 @@ local function buildThemeAndPreviewControls()
     end)
     extra.viewButton:SetHeight(20)
     extra.themeButton=button(overview,"Theme...",113,291,-66,openTheme)
+    extra.prepButton=button(overview,"Outfit prep",143,13,-66,function()
+        extra.timerSetup="prep"
+        UI.Refresh()
+    end)
     extra.timerButton=button(overview,"Runway timer",114,168,-66,function()
-        extra.timerSetup=true
+        extra.timerSetup="runway"
         UI.Refresh()
     end)
     extra.turnClock=label(overview,"",15,260,-12,gold,142)
@@ -979,7 +982,7 @@ local function showSettings(p)
     local data={
         {"How many rounds?", "Choose 1–5 rounds.", "rounds", {1,2,3,4,5}},
         {"Choose themes","Choose a theme, or draw from the local practice pool.","theme",themeNames},
-        {"Preparation timer","How much time do contestants have to get ready?","prep",{60,120,180}},
+        {"Preparation timer","How much time do contestants have to get ready?","prep",{60,unpackColor(context.preparationOptions)}},
         {"Voting timer","Voting remains open until the timer expires.","vote",{30,60,90}},
     }
     local step=data[w]
@@ -1027,18 +1030,23 @@ function UI.UpdateRunwayClock()
     if left==0 then extra.turnDeadline=nil end
 end
 
-local function showRunwayTimer(p)
-    title:SetText("Runway timer")
-    summary:SetText("Time per contestant\nStarts when the raid leader begins the runway or advances a turn.")
+local function showContestTimer(p)
+    local prep=extra.timerSetup=="prep"
+    title:SetText(prep and "Outfit prep timer" or "Runway timer")
+    summary:SetText(prep and "Time for contestants to get dressed. The countdown starts when the theme is revealed."
+        or "Time per contestant\nStarts when the raid leader begins the runway or advances a turn.")
     details:SetText("")
     roleHint:SetText("")
     local options={}
-    for _,x in ipairs(context.runwayOptions) do
+    local durations=prep and context.preparationOptions or context.runwayOptions
+    if prep and p.practice then durations={60,unpackColor(durations)} end
+    local setDuration=prep and context.setPreparationSeconds or context.setRunwaySeconds
+    for _,x in ipairs(durations) do
         local seconds=x
-        local selected=p.runwaySeconds==seconds
+        local selected=(prep and p.preparationSeconds or p.runwaySeconds)==seconds
         options[#options+1]={clockText(seconds),
             function()
-                local ok=context.setRunwaySeconds(seconds)
+                local ok=setDuration(seconds)
                 if ok then extra.timerSetup=nil end
                 UI.Refresh()
             end,selected}
@@ -1046,7 +1054,7 @@ local function showRunwayTimer(p)
     optionRows(options)
     actionLabel(secondary,"Back")
     primary:Hide()
-    return "Time running out does not advance the runway."
+    return prep and "The host can start the runway after the countdown." or "Time running out does not advance the runway."
 end
 
 local function showPreferences()
@@ -1240,6 +1248,7 @@ function UI.Refresh()
     utility:Hide()
     extra.themeButton:Hide()
     extra.timerButton:Hide()
+    extra.prepButton:Hide()
     extra.turnDeadline=nil
     extra.turnClock:SetText("")
     extra.themeInput:SetShown(extra.themeEditor==true)
@@ -1278,7 +1287,7 @@ function UI.Refresh()
         prompt=extra.themeFeedback or "Up to 48 characters. Start with a letter; use letters, numbers, spaces, commas, apostrophes or hyphens."
     elseif extra.timerSetup then
         contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
-        prompt=showRunwayTimer(p)
+        prompt=showContestTimer(p)
     elseif preferencesMode then
         contestant:Hide();spectator:Hide();confirmPassive:Hide();skipPrep:Hide()
         prompt=showPreferences()
@@ -1317,6 +1326,7 @@ function UI.Refresh()
         if p.practice then actionLabel(utility,"Setup Contest") end
         actionLabel(extra.themeButton,"Theme...")
         if p.runwaySeconds then actionLabel(extra.timerButton,"Runway timer") end
+        if p.preparationSeconds then actionLabel(extra.prepButton,"Outfit prep: "..clockText(p.preparationSeconds)) end
         summary:SetText(("Contestants: %d / 5 minimum\nSpectators: %d\nPending addon responses: %d"):format(
             p.contestants, p.spectators, p.pendingResponses))
         details:SetText("Raid roster")
@@ -1364,7 +1374,6 @@ function UI.Refresh()
             or role == "Administrator" and "Give contestants time to get their outfits ready."
             or "Contestants are getting their outfits ready.")
         prepHost, prepBlocked = p.isLeader == true, p.runwayBlocked == true
-        prepLimit=p.prepLimit
         primary:SetText("Begin runway")
         primary:SetShown(prepHost)
         primary:SetEnabled(false)

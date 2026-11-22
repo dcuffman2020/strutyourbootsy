@@ -510,6 +510,18 @@ for i = 2, 6 do
 end
 status(leader, "lobby: ready_to_start")
 assert(not group[2].click("Theme...") and not group[2].click("Runway timer"))
+assert(not group[2].find("Outfit prep: 2:00"))
+local prepButton=assert(leader.find("Outfit prep: 2:00"))
+local turnButton=assert(leader.find("Runway timer"))
+assert(prepButton.anchor[2]+prepButton.width<turnButton.anchor[2])
+assert(leader.click("Outfit prep: 2:00"))
+assertLabel(leader,"Outfit prep timer")
+assert(leader.find("2:00").selected and not leader.find("1:00"))
+assert(leader.click("Back") and leader.find("Outfit prep: 2:00"))
+assert(leader.click("Outfit prep: 2:00") and leader.click("3:00"))
+assert(leader.click("Outfit prep: 3:00") and leader.click("4:00"))
+assert(leader.click("Outfit prep: 4:00") and leader.click("5:00"))
+assert(leader.find("Outfit prep: 5:00"))
 assert(leader.click("Theme..."))
 local input=leader.env.SYBThemeInput
 assert(not leader.click("Use theme"))
@@ -521,14 +533,14 @@ assertLabel(leader,"Theme selected, hidden until Start: Guild-Forged, Round 1")
 assert(leader.click("Runway timer") and leader.click("2:00"))
 assert(leader.click("Runway timer") and leader.click("1:00"))
 checkHiddenTheme = false
-local finishingAt = group[1].env.GetServerTime() + 120
+local finishingAt = group[1].env.GetServerTime() + 300
 group[6].missReveal = true
 assert(leader.click("Start contest"))
 assert(leader.warnings[2]=="Strut Your Bootsy: Preparation is open. Theme: Guild-Forged, Round 1.")
 deliver()
 for i = 1, 5 do
     assertLabel(group[i], "Theme: Guild-Forged, Round 1")
-    assertLabel(group[i], "Time to prepare: 2:00")
+    assertLabel(group[i], "Time to prepare: 5:00")
 end
 assertLabel(group[6], "Choose your role")
 advance(24) -- delayed WELCOME recovery must not restart the timer.
@@ -536,7 +548,7 @@ for i, member in ipairs(group) do
     assertLabel(member, "Round 1 of 1: Preparation")
     assertLabel(member, "Registration is closed.\nYour role: " .. (i == 1 and "Administrator" or "Contestant"))
     assertLabel(member, "Theme: Guild-Forged, Round 1")
-    assertLabel(member, "Time to prepare: 1:36")
+    assertLabel(member, "Time to prepare: 4:36")
     assert(not member.click("Start contest"))
     assert(not member.click("Begin runway"))
     assert(not member.click("Skip countdown"))
@@ -800,7 +812,9 @@ assert(demo.find("Custom theme: "..string.rep("W",48)).selected)
 assert(demo.click("Edit theme"))
 demo.env.SYBThemeInput:SetText("Midnight Masquerade")
 assert(demo.click("Use theme"))
-assert(demo.click("Continue") and demo.click("3:00") and demo.click("Continue"))
+assert(demo.click("Continue"))
+assert(demo.find("1:00") and demo.find("2:00").selected and demo.find("3:00") and demo.find("4:00"))
+assert(demo.click("5:00") and demo.click("Continue"))
 assert(demo.click("0:30") and demo.click("Continue") and demo.click("Return to lobby"))
 assert(demo.click("View as") and demo.click("Valeweaver"))
 assertLabel(demo,"CONTESTANT VIEW  /  Valeweaver")
@@ -818,10 +832,10 @@ end
 assert(demo.find("Back") and not demo.find("Begin runway"))
 assert(demo.click("Valeweaver"))
 assertLabel(demo,"Registration is closed.\nYour role: Contestant")
-assertLabel(demo,"Time to prepare: 3:00")
+assertLabel(demo,"Time to prepare: 5:00")
 assert(not demo.click("Skip countdown") and not demo.click("Begin runway"))
 assert(demo.click("Host view"))
-assertLabel(demo, "Time to prepare: 3:00")
+assertLabel(demo, "Time to prepare: 5:00")
 assert(not demo.click("Begin runway"))
 assert(demo.click("Skip countdown") and demo.click("Begin runway"))
 for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cinderstep"}) do
