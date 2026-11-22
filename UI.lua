@@ -472,6 +472,23 @@ function extra.showMiniStatus(p)
     extra.miniStatus:SetText(text)
 end
 
+function extra.addReleaseFooter()
+    local parts={}
+    local get=C_AddOns and C_AddOns.GetAddOnMetadata
+    local version=get and get(addonName,"Version")
+    local published=get and get(addonName,"X-Published-Date")
+    local author=get and get(addonName,"Author")
+    if version and version~="" then parts[#parts+1]="v"..version end
+    if published and published~="" then parts[#parts+1]="Published "..published end
+    parts[#parts+1]="Made by "..(author and author~="" and author or "Herukas")
+    local footer=label(window,table.concat(parts,"  ·  "),10,0,0,muted,390)
+    footer:ClearAllPoints()
+    footer:SetPoint("BOTTOMRIGHT",window,"BOTTOMRIGHT",-39,5)
+    footer:SetJustifyH("RIGHT")
+    footer:SetWordWrap(false)
+    footer:SetMaxLines(1)
+end
+
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
     window:SetSize(465, 564)
@@ -566,6 +583,7 @@ local function build()
     jewel:SetSize(20,7)
     jewel:SetPoint("TOP",window,"BOTTOM",0,63)
     skins.buildChrome(trim,jewel)
+    extra.addReleaseFooter()
     primary = button(window, "Open registration", 152, 285, -516, function()
         local p = context.getProjection()
         if preferencesMode then closePreferences(true); return end

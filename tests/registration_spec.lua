@@ -3,6 +3,11 @@ local now = 100
 local roster, clients, packets = {}, {}, {}
 local addon = "StrutYourBootsy"
 local checkHiddenTheme = false
+local tocMetadata={}
+for line in io.lines(addon..".toc") do
+    local key,value=line:match("^## ([^:]+):%s*(.+)$")
+    if key then tocMetadata[key]=value end
+end
 for i = 1, 8 do
     roster[i] = {name="Player" .. i, guid="GUID-" .. i, online=true}
 end
@@ -71,6 +76,10 @@ local function makeClient(index)
     env.UISpecialFrames, env.SlashCmdList = {}, {}
     env.GameTooltip_Hide = function() end
     env.STANDARD_TEXT_FONT = "Font"
+    env.C_AddOns={GetAddOnMetadata=function(name,key)
+        assert(name==addon)
+        return tocMetadata[key]
+    end}
     env.DEFAULT_CHAT_FRAME = {AddMessage=function(_, text) client.chat[#client.chat + 1] = text end}
     env.math = setmetatable({random=function(lo,hi)
         if lo then
@@ -231,6 +240,12 @@ end
 solo.slash("")
 local window = solo.env.SYBAdminWindow
 assert(window:IsShown() and solo.env.UISpecialFrames[1] == "SYBAdminWindow")
+assert(tocMetadata.Version:match("^[%d]+%.[%d]+%.[%d]+") and tocMetadata["X-Published-Date"]:match("^%a%a%a %d%d?, %d%d%d%d$"))
+assert(tocMetadata.Author=="Herukas")
+local footerText=("v%s  ·  Published %s  ·  Made by Herukas"):format(tocMetadata.Version,tocMetadata["X-Published-Date"])
+local footer
+for _,item in ipairs(window.labels) do if item:GetText()==footerText then footer=item end end
+assert(footer and footer.anchor[1]=="BOTTOMRIGHT" and footer.anchor[2]==window and footer.wordWrap==false)
 local header=assert(solo.find("−")).parent
 local bar=solo.env.SYBMinimizedBar
 assert(not window.scripts.OnDragStart and not bar:IsShown())

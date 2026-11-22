@@ -38,3 +38,7 @@ This is a change from the PRD’s ordinary raid-chat channel. The live host send
 Live ballots and scoring are still out of scope for this alpha. After the live runway ends, the raid leader can announce an externally determined podium once with `/syb announce winners First Second Third`. Enter the three actual contestant names in finish order, with `-Realm` for ambiguous names. Only names from the completed runway are accepted. The warning reads “Congratulations to First Second Third!” Check the feature with an opted-in test raid; automated tests use mock chat, not the Retail client.
 
 If a registered contestant disconnects, current alpha controls hold until they return. Full recovery is a separate milestone. If testing a second *live* contest, reload the group clients for a fresh test session. Do not send SavedVariables or account details with an error report.
+
+## Build information
+
+The lower-right footer reads the version, publication date, and creator credit from the addon manifest. For each alpha you package, update both `Version` and `X-Published-Date` in `StrutYourBootsy.toc`. The display date is the release date, not the date the player installed it.
