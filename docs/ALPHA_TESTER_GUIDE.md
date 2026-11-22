@@ -44,11 +44,17 @@ Contestants see their own face portrait marked **YOU**. Registered contestant ro
 
 ## Next group test
 
-Use this same version on the raid leader and five confirmed contestants. Schema 6 does not mix with earlier builds. Open registration, wait for discovery, confirm all five, and click **Start contest**. Everyone should see the same theme and finish time. At expiry only the leader can begin and advance. The leader sees the full order; participants see the current and next contestant. Verify one consistent progression across all clients through **Runway complete**. During a live contestant’s turn, verify that one deliberate click performs one game emote and the picker vanishes after the leader advances. The current emote hook is covered by mocked client tests; confirm actual animation and layout in Retail. If a client misses an update, use **Refresh** to catch up. If Start is disabled, capture the reason or the `lobby:` value from `/syb status`.
+Use this same version on the raid leader and five confirmed contestants. Schema 7 does not mix with earlier builds. Open registration, wait for discovery, confirm all five, and click **Start contest**. Everyone should see the same theme and finish time. At expiry only the leader can begin and advance. The leader sees the full order; participants see the current and next contestant. Verify one consistent progression across all clients through **Runway complete**. During a live contestant’s turn, verify that one deliberate click performs one game emote and the picker vanishes after the leader advances. The current emote hook is covered by mocked client tests; confirm actual animation and layout in Retail. If a client misses an update, use **Refresh** to catch up. If Start is disabled, capture the reason or the `lobby:` value from `/syb status`.
 
 ## Raid Warnings
 
 This is a change from the PRD’s ordinary raid-chat channel. The live host sends one Raid Warning when registration opens or is cancelled, preparation opens (with the revealed theme), each contestant starts presenting, and the runway ends. The first contestant’s warning also announces that the runway has begun. Timer ticks, reconnects, and UI refreshes are silent. Practice previews these with a banner marked [Practice] and the game’s raid warning sound. It also previews voting opening and closing, round leaders, and the final congratulations after the last podium reveal.
+
+## Review the runway outfits
+
+After the first contestant finishes, select **Review outfits** to see one completed look at a time. Use your mouse wheel or **Previous outfit** and **Next outfit**. The gallery stays in runway order and remains accessible before the host starts voting. While voting, each row’s **Outfit** button opens a preview without clearing any stars or pausing the timer.
+
+Outfit models are an experimental local capture made while the contestant is on the runway. They do not survive a UI reload. If the client cannot load or retain a model, the face and name remain with **Outfit preview unavailable**. Fictional contestants show their names and initials. For the next Retail check, have a contestant change outfits and leave range after presenting. Confirm that a displayed preview remains the original look or falls back rather than silently updating.
 
 ## Vote in a live raid
 

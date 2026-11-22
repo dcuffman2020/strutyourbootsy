@@ -1,5 +1,6 @@
 local addonName, ns = ...
 local UI = {}
+local outfits=ns.Outfits
 ns.UI = UI
 
 local window, launcher
@@ -662,6 +663,84 @@ function extra.refreshPortraits()
     end
 end
 
+function extra.buildOutfitGallery()
+    local gallery=CreateFrame("Frame","SYBOutfitGallery",window,"BackdropTemplate")
+    extra.gallery=gallery
+    gallery:SetAllPoints(window)
+    gallery:SetFrameLevel(window:GetFrameLevel()+29)
+    gallery:EnableMouse(true)
+    gallery:EnableMouseWheel(true)
+    decorate(gallery,palette.window,gold)
+    label(gallery,"Review outfits",23,24,-28,pale,417)
+    extra.galleryCount=label(gallery,"",14,24,-60,muted,417)
+    local stage=panel(-100,346,palette.panel,palette.outline,gallery,24,417)
+    extra.galleryStage=stage
+    extra.galleryFallback=label(stage,"",15,20,-186,muted,377)
+    extra.galleryFallback:SetJustifyH("CENTER")
+    extra.galleryFace=extra.newPortrait(stage,46,185,-130)
+    extra.galleryName=label(gallery,"",18,24,-457,pale,417)
+    extra.galleryName:SetJustifyH("CENTER")
+    local function move(delta)
+        local n=math.max(1,math.min(outfits.complete,(extra.galleryIndex or 1)+delta))
+        if n~=extra.galleryIndex then extra.galleryIndex=n;UI.Refresh() end
+    end
+    gallery:SetScript("OnMouseWheel",function(_,delta) if delta~=0 then move(delta>0 and -1 or 1) end end)
+    extra.galleryPrev=button(gallery,"Previous outfit",131,24,-488,function() move(-1) end)
+    extra.galleryNext=button(gallery,"Next outfit",131,310,-488,function() move(1) end)
+    button(gallery,"Back to runway",152,157,-544,function() extra.galleryOpen=nil;UI.Refresh() end,true)
+    gallery:Hide()
+end
+
+function extra.buildInlineOutfit()
+    local card=panel(-407,71,palette.panel,palette.outline,window,24,417)
+    extra.inlineOutfit=card
+    extra.inlineStage=panel(-4,63,palette.tag,palette.outline,card,6,96)
+    extra.inlineFace=extra.newPortrait(extra.inlineStage,42,26,-11)
+    extra.inlineName=label(card,"",14,113,-12,pale,196)
+    extra.inlineName:SetMaxLines(1)
+    extra.inlineName:SetWordWrap(false)
+    extra.inlineStatus=label(card,"",12,113,-34,muted,282)
+    label(card,"Your ratings are kept.",11,113,-51,muted,282)
+    local close=button(card,"Close outfit",103,303,-8,function() extra.inlineIndex=nil;UI.Refresh() end)
+    close:SetHeight(22)
+    card:Hide()
+end
+
+function extra.showGallery(p)
+    if not extra.galleryOpen or outfits.complete<1 then return end
+    local i=math.max(1,math.min(outfits.complete,extra.galleryIndex or 1))
+    extra.galleryIndex=i
+    local entry=outfits:Get(i)
+    if not entry and not p.practice then
+        local page=math.ceil(i/context.votePageSize)
+        outfits:RememberRows(context.getVotePage(page))
+        entry=outfits:Get(i)
+        if not entry then extra.pendingVotePage=page;context.requestVotePage(page) end
+    end
+    extra.gallery:Show()
+    extra.galleryCount:SetText(("Outfit %d of %d · Runway order"):format(i,outfits.complete))
+    extra.galleryName:SetText(entry and entry.name or ("Contestant "..i))
+    extra.galleryPrev:SetEnabled(i>1)
+    extra.galleryNext:SetEnabled(i<outfits.complete)
+    local shown=outfits:ShowModel(entry,extra.galleryStage,270,325)
+    extra.galleryFallback:SetText(shown and "" or p.practice and "Practice contestant · No live outfit"
+        or not entry and "Loading contestant…" or "Outfit preview unavailable")
+    extra.bindPortrait(extra.galleryFace,not shown and (entry and entry.name or "Contestant") or nil,entry and entry.guid)
+end
+
+function extra.showInlineOutfit(p)
+    local i=extra.inlineIndex
+    if p.phase~="voting" or not i then return end
+    local entry=outfits:Get(i)
+    if not entry then return end
+    extra.inlineOutfit:Show()
+    extra.inlineName:SetText(entry.name)
+    local shown=outfits:ShowModel(entry,extra.inlineStage,60,62)
+    extra.inlineStatus:SetText(shown and "As presented on the runway." or p.practice and "Practice contestant · No live outfit"
+        or "Outfit preview unavailable")
+    extra.bindPortrait(extra.inlineFace,not shown and entry.name or nil,entry.guid)
+end
+
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
     -- Reserve the expanded emote space on every screen so the window never jumps.
@@ -674,6 +753,8 @@ local function build()
     window:EnableMouse(true)
     window:SetScript("OnHide",function(self)
         self:StopMovingOrSizing()
+        outfits:HideModel()
+        extra.galleryOpen,extra.inlineIndex=nil,nil
         if extra.help then extra.help:Hide() end
         if extra.isMinimized then
             if extra.themeInput then extra.themeInput:ClearFocus() end
@@ -870,16 +951,22 @@ local function build()
     minimize:SetScript("OnLeave",GameTooltip_Hide)
     extra.buildMiniBar()
     extra.buildHelp()
+    extra.buildOutfitGallery()
+    extra.buildInlineOutfit()
+    extra.reviewOutfits=button(overview,"Review outfits",118,224,-66,function()
+        extra.galleryOpen=true
+        UI.Refresh()
+    end)
     extra.voteBack=button(overview,"Previous",88,13,-63,function() extra.votePage=extra.votePage-1;UI.Refresh() end)
     extra.voteNext=button(overview,"Next",88,109,-63,function() extra.votePage=extra.votePage+1;UI.Refresh() end)
     extra.votePageLabel=label(overview,"",12,212,-70,muted,128)
-    votePanel=panel(-265,150,palette.panel,palette.outline)
+    votePanel=panel(-258,150,palette.panel,palette.outline)
     for i=1,5 do
         local row=panel(-5-(i-1)*28,27,palette.window,palette.outline,votePanel,5,407)
-        local item={frame=row,label=label(row,"",13,35,-6,pale,183),stars={},portrait=extra.newPortrait(row,21,7,-3)}
+        local item={frame=row,label=label(row,"",13,35,-6,pale,143),stars={},portrait=extra.newPortrait(row,21,7,-3)}
         for n=1,5 do
             local choice=n
-            local control=button(row,"",26,233+(choice-1)*30,-2,function()
+            local control=button(row,"",26,183+(choice-1)*28,-2,function()
                 if item.live and item.voteRow then context.rateLive(item.voteRow,choice)
                 elseif not extra.previewName then context.practiceAction("RATE",item.name,choice) end
             end)
@@ -897,6 +984,15 @@ local function build()
             control:SetScript("OnLeave",GameTooltip_Hide)
             item.stars[choice]=control
         end
+        item.outfit=button(row,"Outfit",70,328,-2,function()
+            local index=item.voteRow and item.voteRow.index or i
+            if outfits:Get(index) then
+                extra.inlineIndex=extra.inlineIndex~=index and index or nil
+                UI.Refresh()
+            end
+        end)
+        item.outfit:SetHeight(23)
+        item.outfit.outfitRow=i
         ratingRows[i]=item
     end
     window:Hide()
@@ -1158,6 +1254,7 @@ local function showBallot(p)
     local edits=false
     for i,row in ipairs(ratingRows) do
         row.frame:Show()
+        row.outfit:SetShown(outfits:Get(i)~=nil)
         row.live,row.voteRow=nil,nil
         row.name=p.runwayOrder[i]
         extra.bindPortrait(row.portrait,row.name)
@@ -1230,9 +1327,11 @@ function extra.showLiveVoting(p)
     info:Hide()
     votePanel:Show()
     local actor=context.playerName()
+    outfits:RememberRows(rows)
     for i,item in ipairs(ratingRows) do
         local entry=rows and rows[i]
         item.frame:SetShown(entry~=nil)
+        item.outfit:SetShown(entry~=nil and entry.name~=nil)
         item.live,item.voteRow=true,entry
         if entry then
             item.name=entry.name or "Contestant unavailable"
@@ -1301,10 +1400,19 @@ local function showResults(p)
 end
 
 function UI.Refresh()
+    if not context.getProjection then return end
+    local p=context.getProjection()
+    outfits:Observe(p)
     if not window then return end
-    if extra.isMinimized then extra.showMiniStatus(context.getProjection());return end
+    if extra.isMinimized then extra.showMiniStatus(p);return end
     if not window:IsShown() then return end
-    local p = context.getProjection()
+    extra.gallery:Hide();extra.inlineOutfit:Hide();extra.reviewOutfits:Hide()
+    local galleryPhase=p.phase=="runway" or p.phase=="runway_complete"
+    if extra.galleryKey~=outfits.key then
+        extra.galleryKey,extra.galleryIndex,extra.galleryOpen,extra.inlineIndex=outfits.key,1,nil,nil
+    end
+    if not galleryPhase then extra.galleryOpen=nil end
+    if p.phase~="voting" then extra.inlineIndex=nil end
     for _,entry in ipairs(extra.portraits) do extra.bindPortrait(entry) end
     extra.portraitYou:Hide()
     if p.phase~="registration" then extra.timerSetup=nil end
@@ -1536,7 +1644,12 @@ function UI.Refresh()
     if own then extra.bindPortrait(extra.selfPortrait,p.preview and extra.previewName or context.playerName(),nil,not p.practice) end
     extra.portraitYou:SetShown(own==true)
     heroName:SetWidth(own and 325 or 391)
-    heroNext:SetWidth(own and 325 or 391)
+    local review=galleryPhase and outfits.complete>0 and not preferencesMode and not extra.viewPicker
+    heroNext:SetWidth(review and 204 or own and 325 or 391)
+    extra.reviewOutfits:SetShown(review)
+    extra.showGallery(p)
+    if not extra.galleryOpen and votePanel:IsShown() then extra.showInlineOutfit(p) end
+    if not extra.gallery:IsShown() and not extra.inlineOutfit:IsShown() then outfits:HideModel() end
     extra.refreshPortraits()
     updateEmoteDrawer(p)
     local noticeText = p.notice and (messages[p.notice] or ("Action failed (" .. p.notice .. "). Refresh and try again."))

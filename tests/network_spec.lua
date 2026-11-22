@@ -62,7 +62,7 @@ assert(decoded == nil and malformedReason == "malformed_payload")
 local unknown, unknownReason = Network.Decode("t=EVIL|s="..Network.SCHEMA)
 assert(unknown == nil and unknownReason == "unknown_command")
 
-local old, oldReason = Network.Decode("t=HELLO|s=5|capability=raid-comms-v5")
+local old, oldReason = Network.Decode("t=HELLO|s=6|capability=raid-comms-v6")
 assert(not old and oldReason == "unsupported_client")
 assert(not leaderSent[#leaderSent].message:find("theme=", 1, true))
 

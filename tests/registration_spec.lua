@@ -75,7 +75,7 @@ local function makeClient(index)
     local client = {frames={}, chat={}, timers={}, index=index, inRaid=index ~= nil}
     local env = setmetatable({}, {__index=_G})
     client.env = env
-    env.CreateFrame = function(_, name, parent)
+    env.CreateFrame = function(kind, name, parent)
         local frame = widget(parent)
         client.frames[#client.frames + 1] = frame
         if parent then
@@ -83,6 +83,23 @@ local function makeClient(index)
             table.insert(parent.testFrames,frame)
         end
         if name then env[name] = frame end
+        if kind=="DressUpModel" then
+            frame.SetUnit=function(self,unit)
+                local row=unit=="player" and character or roster[tonumber(unit:match("%d+"))]
+                self.capturedGuid=row.guid
+                self.visuals={[1]={appearanceID=row.appearanceID or 19}}
+                self.ready=true
+                self.binds=(rawget(self,"binds") or 0)+1
+                return true
+            end
+            frame.ClearModel=function(self) self.ready=false;self.visuals=nil end
+            frame.IsGeoReady=function(self) return self.ready end
+            frame.GetItemTransmogInfoList=function(self) return self.visuals end
+            frame.SetAutoDress=function(self,on) self.autoDress=on end
+            frame.SetItemTransmogInfo=function(self,info,slot) self.visuals[slot]=info end
+            frame.SetParent=function(self,nextParent) self.parent=nextParent end
+            frame.SetAlpha=function(self,alpha) self.alpha=alpha end
+        end
         return frame
     end
     env.UIParent, env.Minimap, env.GameTooltip = widget(), widget(), widget()
@@ -174,7 +191,7 @@ local function makeClient(index)
             chunk(addon, namespace)
         end
     end
-    assert(table.concat(files, ",") == "Core.lua,Network.lua,UI.lua,Main.lua")
+    assert(table.concat(files, ",") == "Core.lua,Network.lua,Outfits.lua,UI.lua,Main.lua")
     client.event = function(event, ...)
         local frame = client.frames[1]
         if frame.events[event] then frame.scripts.OnEvent(frame, event, ...) end
@@ -618,6 +635,8 @@ leader.outOfView["GUID-3"]=nil
 portraitEvent(nil,"PORTRAITS_UPDATED")
 assert(rowFace:IsShown() and rowFace.nativePortrait=="GUID-3" and not rowFallback:IsShown())
 assert(#packets==packetsBeforePortrait,"Portrait refresh must never send raid traffic.")
+assert(not group[2].find("Review outfits"))
+assert(not group[2].ns.Outfits:Get(1))
 local order = {"Player3-Realm","Player4-Realm","Player5-Realm","Player6-Realm","Player2-Realm"}
 for j,name in ipairs(order) do
     if j > 1 then advance(6) end
@@ -683,6 +702,17 @@ for j,name in ipairs(order) do
         assert(group[6].click("Refresh")); deliver()
         assertLabel(group[6],"Turn 0:55")
         assertLabel(group[6],"Presenting  2 of 5")
+        local viewer=group[2]
+        local savedLook=assert(viewer.ns.Outfits:Get(1).model)
+        assert(savedLook.capturedGuid=="GUID-3" and not savedLook.autoDress)
+        roster[3].appearanceID=222
+        viewer.outOfView["GUID-3"]=true
+        assert(viewer.click("Review outfits"))
+        assertLabel(viewer,"Outfit 1 of 1 · Runway order")
+        assert(viewer.ns.Outfits.shown==savedLook and savedLook.binds==1 and savedLook.visuals[1].appearanceID==19)
+        assert(not viewer.click("Next outfit"))
+        assert(viewer.click("Back to runway") and not savedLook:IsShown())
+        viewer.outOfView["GUID-3"]=nil
     end
 end
 for _,member in ipairs(group) do
@@ -708,6 +738,14 @@ leader.blockWarning=false
 leader.slash("announce winners Player3 Player4 Player5")
 leader.slash("announce winners Player4 Player3 Player5")
 assert(#leader.warnings==9 and leader.warnings[9]=="Congratulations to Player3-Realm Player4-Realm Player5-Realm!")
+assert(group[2].click("Review outfits"))
+local gallery=group[2].env.SYBOutfitGallery
+assert(gallery:IsShown())
+assertLabel(group[2],"Outfit 1 of 5 · Runway order")
+gallery.scripts.OnMouseWheel(gallery,-1)
+assertLabel(group[2],"Outfit 2 of 5 · Runway order")
+assert(group[2].click("Previous outfit") and group[2].click("Back to runway"))
+assert(not gallery:IsShown())
 advance(6)
 assert(leader.click("Begin voting")); deliver()
 assertLabel(leader,"Voting monitor")
@@ -724,6 +762,11 @@ local function rateInLive(client,name,n)
 end
 assert(not rateInLive(group[3],"Player3-Realm",5))
 assert(rateInLive(group[2],"Player3-Realm",5))
+assert(group[2].click("Outfit"))
+assertLabel(group[2],"As presented on the runway.")
+assertLabel(group[2],"1:00")
+assert(group[2].find("Submit ballot") and group[2].click("Close outfit"))
+assert(group[2].find("Submit ballot"))
 assert(group[2].click("Next")); deliver()
 assert(rateInLive(group[2],"Player2-Realm",4)==false)
 assert(group[2].click("Previous")); deliver()

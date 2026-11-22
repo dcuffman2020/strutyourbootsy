@@ -138,7 +138,8 @@ local function onNetworkCommand(action, sender, message)
                 order[#order + 1] = member.name
             end
         end
-        return Core.Start(state, Core.Shuffle(order, math.random), projection.presence.addon_pending + projection.presence.unknown)
+        local ok,reason=Core.Start(state,Core.Shuffle(order,math.random),projection.presence.addon_pending + projection.presence.unknown)
+        return ok,reason,ok and state.order or nil
     end
     if action == "BEGIN_RUNWAY" or action == "ADVANCE" then
         local operation = action == "BEGIN_RUNWAY" and Core.BeginRunway or Core.AdvanceRunway
@@ -499,7 +500,7 @@ local function getVotePage(page)
 end
 
 local function requestVotePage(page)
-    if not network or not network.voting or network:IsAuthority() then return end
+    if not network or not (network.voting or network.runway) or network:IsAuthority() then return end
     local key=network.sessionId..":"..network.version..":"..page
     if not votePageRequested[key] or GetTime()-votePageRequested[key]>=6 then
         votePageRequested[key]=GetTime()

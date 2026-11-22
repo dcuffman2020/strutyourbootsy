@@ -8,8 +8,8 @@ Network.__index = Network
 ns.Network = Network
 
 Network.PREFIX = "SYBDEV02"
-Network.SCHEMA = 6
-Network.CAPABILITY = "raid-comms-v6"
+Network.SCHEMA = 7
+Network.CAPABILITY = "raid-comms-v7"
 Network.PREPARATION_SECONDS = 120
 Network.PREPARATION_OPTIONS = {120,180,240,300}
 Network.PREPARATION_MAX = Network.PREPARATION_OPTIONS[#Network.PREPARATION_OPTIONS]
@@ -387,7 +387,7 @@ function Network:StartSession(sessionId)
     self.sessionId, self.version, self.phase = sessionId, 1, "registration"
     self.originalLeader = self.leader
     self.discoveryStarted, self.lastRejected, self.preparation, self.runway, self.contestantGuids = nil, nil, nil, nil, nil
-    self.voting,self.votePages,self.voted,self.sentVotePages=nil,{},nil,{}
+    self.voting,self.votePages,self.voted,self.sentVotePages,self.galleryOrder=nil,{},nil,{},nil
     self.runwaySeconds=Network.RUNWAY_SECONDS
     self.preparationSeconds=Network.PREPARATION_SECONDS
     self.absent = {}
@@ -605,6 +605,7 @@ function Network:_handleCommand(message, sender)
         self.roster[sender].presence = "addon_ready"
     elseif action == "START" then
         self.phase, self.preparation, self.contestantGuids = "preparation", preparation, frozen
+        self.galleryOrder=turn
     elseif action=="END" then
         self.phase,self.voting,self.votePages,self.voted="ended",nil,{},nil
     elseif action=="BEGIN_VOTING" then
@@ -638,9 +639,10 @@ function Network:_handleCommand(message, sender)
 end
 
 function Network:GetVotePage(page)
-    local vote=self.voting
-    if not vote then return nil end
+    local vote=self.voting or (self.runway and self.galleryOrder and {
+        total=self.runway.index-(self.phase=="runway" and 1 or 0),order=self.galleryOrder})
     if not self:IsAuthority() then return (self.votePages or {})[page] end
+    if not vote then return nil end
     local result={}
     local first=(page-1)*Network.VOTE_PAGE_SIZE+1
     for i=first,math.min(first+Network.VOTE_PAGE_SIZE-1,vote.total) do
@@ -652,7 +654,7 @@ function Network:GetVotePage(page)
 end
 
 function Network:RequestVotePage(page)
-    if not self.voting or not self.sessionId then return false end
+    if not (self.voting or self.runway) or not self.sessionId then return false end
     return self:Send({type="PAGE_REQ",session_id=self.sessionId,version=self.version,page=page},"WHISPER",self.leader)
 end
 
@@ -695,7 +697,10 @@ function Network:Receive(prefix, wire, channel, sender)
         voting={endsAt=endsAt,total=tonumber(message.vote_total)}
     end
     if message.type=="PAGE" or message.type=="PAGE_REQ" then
-        if (self.phase~="voting" and self.phase~="round_results") or not self.voting or self.sessionId~=message.session_id or self.version~=tonumber(message.version) then return false,"stale_session" end
+        local runwayPhase=self.phase=="runway" or self.phase=="runway_complete"
+        local total=self.voting and self.voting.total or runwayPhase and self.runway and
+            (self.runway.index-(self.phase=="runway" and 1 or 0))
+        if not total or self.sessionId~=message.session_id or self.version~=tonumber(message.version) then return false,"stale_session" end
         local page=tonumber(message.page)
         if message.type=="PAGE_REQ" then
             if not self:IsAuthority() or self.originalLeader~=self.leader then return false,"not_authority" end
@@ -709,11 +714,11 @@ function Network:Receive(prefix, wire, channel, sender)
             local guid,score=part:match("^([%w%-]+):(%d+)$")
             score=tonumber(score)
             if not validGuid(guid) or seen[guid] or not score or (score~=0 and (score<100 or score>500))
-                or (self.phase=="voting" and score~=0) then return false,"malformed_payload" end
+                or (self.phase~="round_results" and score~=0) then return false,"malformed_payload" end
             seen[guid]=true
             result[#result+1]={guid=guid,index=first+#result,score=score~=0 and score or nil}
         end
-        if #result~=math.min(Network.VOTE_PAGE_SIZE,self.voting.total-first+1) then return false,"malformed_payload" end
+        if #result~=math.min(Network.VOTE_PAGE_SIZE,total-first+1) then return false,"malformed_payload" end
         self.votePages=self.votePages or {}
         self.votePages[page]=result
         self:_emit("vote_page",{})
@@ -898,7 +903,7 @@ function Network:GetProjection()
             for _, member in ipairs(members) do if member.guid == guid then return member.name end end
             return "Contestant unavailable"
         end
-        r = {index=self.runway.index,total=self.runway.total,current=name(self.runway.current),upcoming=name(self.runway.upcoming),endsAt=self.runway.endsAt}
+        r = {index=self.runway.index,total=self.runway.total,current=name(self.runway.current),currentGuid=self.runway.current,upcoming=name(self.runway.upcoming),endsAt=self.runway.endsAt}
     end
     return { sessionId=self.sessionId, version=self.version, phase=self.phase, leader=self.leader,
         isLeader=self:IsAuthority() == true, presence=counts, contestants=contestants, spectators=spectators,
