@@ -260,6 +260,7 @@ end
 solo.slash("")
 local window = solo.env.SYBAdminWindow
 assert(window:IsShown() and solo.env.UISpecialFrames[1] == "SYBAdminWindow")
+assert(window.width==465 and window.height==601)
 assert(tocMetadata.Version:match("^[%d]+%.[%d]+%.[%d]+") and tocMetadata["X-Published-Date"]:match("^%a%a%a %d%d?, %d%d%d%d$"))
 assert(tocMetadata.Author=="Herukas")
 local footerText=("v%s  ·  Published %s  ·  Made by Herukas"):format(tocMetadata.Version,tocMetadata["X-Published-Date"])
@@ -904,7 +905,10 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         demo.env.SYBMinimapLauncher.scripts.OnClick(demo.env.SYBMinimapLauncher)
         assert(demo.env.SYBAdminWindow:IsShown() and not demo.env.SYBMinimizedBar:IsShown())
         assertLabel(demo,"CONTESTANT VIEW  /  Valeweaver")
-        assert(demo.click("Emotes +"))
+        local w=demo.env.SYBAdminWindow
+        local width,height=w.width,w.height
+        assert(width==465 and height==601 and demo.click("Emotes +"))
+        assert(w.width==width and w.height==height)
         local choices=assertEmoteGrid(demo)
         assert(demo.emoteDraws==15 and #demo.emotes==0)
         assert(demo.click(choices[6]))
@@ -912,7 +916,7 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         assert(not demo.click("Bow"))
         assert(#demo.emotes==0)
         assert(demo.click("Emotes −") and not demo.click("Chicken"))
-        assert(demo.env.SYBAdminWindow.height==576)
+        assert(w.width==width and w.height==height)
         assert(demo.click("Emotes +"))
         assert(table.concat(choices)==table.concat(assertEmoteGrid(demo)) and demo.emoteDraws==15)
         assert(demo.click("Host view") and not demo.click("Emotes +"))
@@ -923,7 +927,6 @@ for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cind
         assert(not demo.click("Next contestant") and not demo.click("Pause"))
         assert(demo.click("Host view"))
         now=now+15
-        local w=demo.env.SYBAdminWindow
         w.scripts.OnUpdate(w,15)
         assertLabel(demo,"Turn 1:45")
         local warningsBeforePause=#demo.banners

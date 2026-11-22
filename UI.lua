@@ -424,7 +424,6 @@ local function updateEmoteDrawer(p)
     extra.emoteToggle:SetShown(key~=nil)
     extra.emoteToggle:SetText(extra.emoteOpen and "Emotes −" or "Emotes +")
     local expanded=key~=nil and extra.emoteOpen==true
-    window:SetHeight((expanded and 589 or 564)+skins.footerPadding)
     if expanded then info:SetHeight(200) end
     extra.emoteDrawer:SetShown(expanded)
     extra.emotePractice=p.preview==true
@@ -665,7 +664,8 @@ end
 
 local function build()
     window = CreateFrame("Frame", "SYBAdminWindow", UIParent, "BackdropTemplate")
-    window:SetSize(465, 564+skins.footerPadding)
+    -- Reserve the expanded emote space on every screen so the window never jumps.
+    window:SetSize(465, 589+skins.footerPadding)
     window:SetPoint("CENTER")
     window:SetFrameStrata("DIALOG")
     window:SetMovable(true)
