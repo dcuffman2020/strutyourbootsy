@@ -14,7 +14,11 @@ end}
 function methods:SetNormalTexture(path) self.normalTexture = path end
 function methods:SetScript(event, fn) self.scripts[event] = fn end
 function methods:RegisterEvent(event) self.events[event] = true end
-function methods:SetText(value) self.text = value end
+function methods:SetText(value)
+    self.text = value
+    if self.scripts.OnTextChanged then self.scripts.OnTextChanged(self) end
+end
+function methods:GetText() return rawget(self,"text") or "" end
 function methods:SetEnabled(value) self.enabled = value end
 function methods:Show() self.shown = true end
 function methods:Hide()
@@ -310,13 +314,24 @@ for i = 2, 6 do
     if group[i].click("Confirm role") then deliver() end
 end
 status(leader, "lobby: ready_to_start")
+assert(not group[2].click("Theme...") and not group[2].click("Runway timer"))
+assert(leader.click("Theme..."))
+local input=leader.env.SYBThemeInput
+assert(not leader.click("Use theme"))
+input:SetText("|c Untrusted")
+assert(not leader.click("Use theme"))
+input:SetText("  Guild-Forged, Round 1  ")
+assert(leader.click("Use theme"))
+assertLabel(leader,"Theme selected, hidden until Start: Guild-Forged, Round 1")
+assert(leader.click("Runway timer") and leader.click("Selected: 2:00"))
+assert(leader.click("Runway timer") and leader.click("1:00"))
 checkHiddenTheme = false
 local finishingAt = group[1].env.GetServerTime() + 120
 group[6].missReveal = true
 assert(leader.click("Start contest"))
 deliver()
 for i = 1, 5 do
-    assertLabel(group[i], "Theme: Royalty")
+    assertLabel(group[i], "Theme: Guild-Forged, Round 1")
     assertLabel(group[i], "Time to prepare: 2:00")
 end
 assertLabel(group[6], "Choose your role")
@@ -324,7 +339,7 @@ advance(24) -- delayed WELCOME recovery must not restart the timer.
 for i, member in ipairs(group) do
     assertLabel(member, "Round 1 of 1: Preparation")
     assertLabel(member, "Registration is closed.\nYour role: " .. (i == 1 and "Administrator" or "Contestant"))
-    assertLabel(member, "Theme: Royalty")
+    assertLabel(member, "Theme: Guild-Forged, Round 1")
     assertLabel(member, "Time to prepare: 1:36")
     assert(not member.click("Start contest"))
     assert(not member.click("Begin runway"))
@@ -345,6 +360,12 @@ leader.event("GROUP_ROSTER_UPDATE")
 for i=2,6 do assert(not group[i].click("Begin runway")) end
 group[6].missReveal = false
 assert(leader.click("Begin runway")); deliver()
+for _,member in ipairs(group) do assertLabel(member,"Turn 1:00") end
+advance(60)
+for _,member in ipairs(group) do
+    assertLabel(member,"Time’s up")
+    assertLabel(member,"Presenting  1 of 5") -- Expiry never advances.
+end
 local order = {"Player3-Realm","Player4-Realm","Player5-Realm","Player6-Realm","Player2-Realm"}
 for j,name in ipairs(order) do
     if j > 1 then advance(6) end
@@ -367,7 +388,10 @@ for j,name in ipairs(order) do
         assertLabel(group[6],"Presenting  1 of 5")
         assertLabel(group[6],"Player3-Realm")
         group[6].missReveal=false
+        advance(5)
         assert(group[6].click("Refresh")); deliver()
+        assertLabel(group[6],"Turn 0:55")
+        assertLabel(group[6],"Presenting  2 of 5")
     end
 end
 for _,member in ipairs(group) do
@@ -396,20 +420,45 @@ assertLabel(demo,"How many rounds?")
 assert(demo.click("2"))
 assert(demo.click("Continue"))
 assertLabel(demo,"Choose themes")
-assert(demo.click("Royalty"))
-assert(demo.click("Continue") and demo.click("1:00") and demo.click("Continue"))
+assert(demo.click("Custom theme"))
+demo.env.SYBThemeInput:SetText("Midnight Masquerade")
+assert(demo.click("Use theme"))
+assertLabel(demo,"Custom theme: Midnight Masquerade")
+assert(demo.click("Continue") and demo.click("3:00") and demo.click("Continue"))
 assert(demo.click("0:30") and demo.click("Continue") and demo.click("Return to lobby"))
-assert(demo.click("Start contest"))
+assert(demo.click("View as") and demo.click("Valeweaver"))
+assertLabel(demo,"CONTESTANT VIEW  /  Valeweaver")
+assertLabel(demo,"You’re registered as a contestant. Waiting for the raid leader.")
+assert(not demo.click("Start contest") and not demo.click("Theme..."))
+assert(demo.click("Host view") and demo.click("Start contest"))
 assertLabel(demo,"Round 1 of 2: Preparation")
-assertLabel(demo, "Time to prepare: 1:00")
+assertLabel(demo,"Theme: Midnight Masquerade")
+assert(demo.click("View as") and demo.click("Valeweaver"))
+assertLabel(demo,"Registration is closed.\nYour role: Contestant")
+assertLabel(demo,"Time to prepare: 3:00")
+assert(not demo.click("Skip countdown") and not demo.click("Begin runway"))
+assert(demo.click("Host view"))
+assertLabel(demo, "Time to prepare: 3:00")
 assert(not demo.click("Begin runway"))
 assert(demo.click("Skip countdown") and demo.click("Begin runway"))
 for j,name in ipairs({"Valeweaver","Mossmantle","Copperwink","Thistledawn","Cinderstep"}) do
     assertLabel(demo,"Round 1 of 2: Runway")
     if j==1 then
+        assertLabel(demo,"Turn 2:00")
+        assert(demo.click("View as") and demo.click("Valeweaver"))
+        assertLabel(demo,"You’re presenting now.")
+        assertLabel(demo,"Up next: Mossmantle")
+        assert(not demo.click("Next contestant") and not demo.click("Pause"))
+        assert(demo.click("Host view"))
+        now=now+15
+        local w=demo.env.SYBAdminWindow
+        w.scripts.OnUpdate(w,15)
+        assertLabel(demo,"Turn 1:45")
         assert(demo.click("Pause"));assertLabel(demo,"Runway paused")
         assert(not demo.click("Next contestant"))
+        now=now+30
         assert(demo.click("Resume runway"));assertLabel(demo,"Presenting  1 of 5")
+        assertLabel(demo,"Turn 1:45")
     end
     local found=false
     for _,f in ipairs(demo.frames) do if rawget(f,"text")==name .. "  ·  Presenting" and f.shown then found=true end end
@@ -455,4 +504,4 @@ demo.slash("practice")
 demo.inRaid=true; demo.event("GROUP_ROSTER_UPDATE")
 assertLabel(demo, "Welcome to the runway")
 assert(#packets==0)
-print("Registration, timed preparation, synchronized runway, and solo practice specs passed")
+print("Registration, custom themes, synchronized turn timers, and contestant preview passed")

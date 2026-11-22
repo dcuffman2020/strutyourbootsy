@@ -8,9 +8,16 @@ Network.__index = Network
 ns.Network = Network
 
 Network.PREFIX = "SYBDEV02"
-Network.SCHEMA = 3
-Network.CAPABILITY = "raid-comms-v3"
+Network.SCHEMA = 4
+Network.CAPABILITY = "raid-comms-v4"
 Network.PREPARATION_SECONDS = 120
+Network.RUNWAY_SECONDS = 120
+Network.RUNWAY_OPTIONS = {30,60,120,180,300}
+
+function Network.ValidRunwaySeconds(seconds)
+    for _,value in ipairs(Network.RUNWAY_OPTIONS) do if seconds==value then return true end end
+    return false
+end
 Network.MAX_BYTES = 255
 Network.DISCOVERY_SECONDS = 10
 Network.MAX_RECENT_COMMANDS = 128
@@ -110,8 +117,8 @@ end
 
 local allowedFields = {
     HELLO={capability=true}, PING={session_id=true, version=true},
-    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true},
-    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true},
+    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true},
+    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true},
     CMD={session_id=true, command_id=true, expected_version=true, action=true, role=true},
     ACK={session_id=true, command_id=true, version=true, reason=true},
     REJECT={session_id=true, command_id=true, version=true, reason=true},
@@ -120,6 +127,12 @@ local allowedFields = {
 local function validTheme(value)
     -- Alpha theme names are bounded plain text, not WoW markup.
     return type(value) == "string" and #value <= 48 and value:match("^[%a][%w ,'-]*$") ~= nil
+end
+
+function Network.NormalizeCustomTheme(text)
+    if type(text)~="string" then return nil end
+    local trimmed=text:match("^ *(.-) *$")
+    return validTheme(trimmed) and trimmed or nil
 end
 
 local function validGuid(x)
@@ -154,12 +167,12 @@ local function validateFields(message)
             local pos, total = integer(message.pos,1), integer(message.total,5)
             if not pos or not total or total > 39 or pos > total then return false, "malformed_payload" end
             if message.phase == "runway" then
-                if not validGuid(message.cur) or (pos < total and not validGuid(message.nxt)) or
+                if not integer(message.run_ends,1) or not validGuid(message.cur) or (pos < total and not validGuid(message.nxt)) or
                    (pos == total and message.nxt) or message.cur == message.nxt then
                     return false, "malformed_payload"
                 end
-            elseif pos ~= total or message.cur or message.nxt then return false, "malformed_payload" end
-        elseif message.pos or message.total or message.cur or message.nxt then
+            elseif pos ~= total or message.cur or message.nxt or message.run_ends then return false, "malformed_payload" end
+        elseif message.pos or message.total or message.cur or message.nxt or message.run_ends then
             return false, "malformed_payload"
         end
     end
@@ -312,7 +325,7 @@ end
 local function stateFields(self, msg)
     local prep, r = self.preparation, self.runway
     msg.theme, msg.prep_ends = prep and prep.theme, prep and prep.endsAt
-    if r then msg.pos, msg.total, msg.cur, msg.nxt = r.index, r.total, r.current, r.upcoming end
+    if r then msg.pos,msg.total,msg.cur,msg.nxt,msg.run_ends=r.index,r.total,r.current,r.upcoming,r.endsAt end
     return msg
 end
 
@@ -339,6 +352,7 @@ function Network:StartSession(sessionId)
     self.sessionId, self.version, self.phase = sessionId, 1, "registration"
     self.originalLeader = self.leader
     self.discoveryStarted, self.lastRejected, self.preparation, self.runway, self.contestantGuids = nil, nil, nil, nil, nil
+    self.runwaySeconds=Network.RUNWAY_SECONDS
     self.absent = {}
     for name, member in pairs(self.roster) do
         member.role, member.joinedAfterStart = nil, false
@@ -491,7 +505,8 @@ function Network:_handleCommand(message, sender)
     elseif action == "BEGIN_RUNWAY" or action == "ADVANCE" then
         local function guid(name) return name and self.contestantGuids[name] or nil end
         self.phase, self.preparation = turn.current and "runway" or "runway_complete", nil
-        self.runway = {index=turn.index,total=turn.total,current=guid(turn.current),upcoming=guid(turn.upcoming)}
+        self.runway = {index=turn.index,total=turn.total,current=guid(turn.current),upcoming=guid(turn.upcoming),
+            endsAt=turn.current and self.api.serverNow()+self.runwaySeconds or nil}
     end
     self.version = self.version + 1
     self:_remember(replayKey, {ok=true, version=self.version})
@@ -518,7 +533,14 @@ function Network:Receive(prefix, wire, channel, sender)
         return self:_reject(sender, message.type == "CMD" and message.command_id or nil, "wrong_channel")
     end
     local preparation, runway
-    if message.pos then runway = {index=tonumber(message.pos),total=tonumber(message.total),current=message.cur,upcoming=message.nxt} end
+    if message.pos then
+        local endsAt=tonumber(message.run_ends)
+        if endsAt and (not self.api.serverNow or endsAt>self.api.serverNow()+305) then
+            return self:_reject(sender,nil,"malformed_payload")
+        end
+        runway = {index=tonumber(message.pos),total=tonumber(message.total),current=message.cur,
+            upcoming=message.nxt,endsAt=endsAt}
+    end
     if message.prep_ends then
         local endsAt = integer(message.prep_ends, 1)
         local serverTime = self.api.serverNow and self.api.serverNow()
@@ -674,7 +696,7 @@ function Network:GetProjection()
             for _, member in ipairs(members) do if member.guid == guid then return member.name end end
             return "Contestant unavailable"
         end
-        r = {index=self.runway.index,total=self.runway.total,current=name(self.runway.current),upcoming=name(self.runway.upcoming)}
+        r = {index=self.runway.index,total=self.runway.total,current=name(self.runway.current),upcoming=name(self.runway.upcoming),endsAt=self.runway.endsAt}
     end
     return { sessionId=self.sessionId, version=self.version, phase=self.phase, leader=self.leader,
         isLeader=self:IsAuthority() == true, presence=counts, contestants=contestants, spectators=spectators,
