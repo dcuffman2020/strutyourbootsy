@@ -99,6 +99,18 @@ local function makeClient(index)
     env.Enum = {SendAddonMessageResult={Success=0}}
     local registered = false
     client.emotes,client.warnings={},{}
+    client.banners,client.sounds={},{}
+    env.RaidWarningFrame=widget()
+    env.ChatTypeInfo={RAID_WARNING={r=1,g=.28,b=0}}
+    env.RaidNotice_AddMessage=function(frame,text,color)
+        assert(frame==env.RaidWarningFrame and color==env.ChatTypeInfo.RAID_WARNING)
+        client.banners[#client.banners+1]=text
+    end
+    env.SOUNDKIT={RAID_WARNING=8959}
+    env.C_Sound={PlaySound=function(id)
+        assert(id==env.SOUNDKIT.RAID_WARNING)
+        client.sounds[#client.sounds+1]=id
+    end}
     env.C_ChatInfo = {
         SendChatMessage=function(message,channel)
             if client.blockWarning then return false end
@@ -665,6 +677,9 @@ for _,line in ipairs(demo.chat) do
     if line:find("[Practice Raid Warning]",1,true) then localWarnings=localWarnings+1 end
 end
 assert(localWarnings==12 and #demo.warnings==0)
+assert(#demo.banners==localWarnings and #demo.sounds==localWarnings)
+assert(demo.banners[1]=="[Practice] Registration is open. Use /syb to join.")
+assert(demo.banners[#demo.banners]=="[Practice] Congratulations to Valeweaver Mossmantle Copperwink!")
 assert(demo.chat[#demo.chat]:find("Congratulations to Valeweaver Mossmantle Copperwink!",1,true))
 assert(demo.click("Practice again"))
 assertLabel(demo,"Registration lobby")

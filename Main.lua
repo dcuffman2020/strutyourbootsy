@@ -50,6 +50,19 @@ local function winnerWarning(names)
 end
 
 local function practiceWarning(text)
+    local preview="[Practice] "..text
+    local color=ChatTypeInfo and ChatTypeInfo.RAID_WARNING
+    local shown=false
+    if type(RaidNotice_AddMessage)=="function" and RaidWarningFrame and color then
+        shown=pcall(RaidNotice_AddMessage,RaidWarningFrame,preview,color)
+    end
+    if not shown and UIErrorsFrame and type(UIErrorsFrame.AddMessage)=="function" then
+        UIErrorsFrame:AddMessage(preview,1,.82,0,1)
+    end
+    local play=(C_Sound and C_Sound.PlaySound) or PlaySound
+    if type(play)=="function" and SOUNDKIT and SOUNDKIT.RAID_WARNING then
+        pcall(play,SOUNDKIT.RAID_WARNING)
+    end
     say("[Practice Raid Warning] "..text)
 end
 
