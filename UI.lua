@@ -917,7 +917,6 @@ local function build()
                 appearance=skins.key(context.preferences.appearance),nativeDrag=true}
             UI.Refresh()
         elseif p.phase=="registration" and p.practice then context.practiceAction("SETUP")
-        elseif p.phase=="runway" and p.practice then context.practiceAction("PAUSE")
         elseif p.phase=="voting" and p.practice then context.skipVote()
         else context.enterPractice() end
     end)
@@ -953,10 +952,13 @@ local function build()
     extra.buildHelp()
     extra.buildOutfitGallery()
     extra.buildInlineOutfit()
-    extra.reviewOutfits=button(overview,"Review outfits",118,224,-66,function()
+    extra.reviewOutfits=button(window,"Review outfits",140,135,-516,function()
         extra.galleryOpen=true
         UI.Refresh()
     end)
+    extra.reviewOutfits:ClearAllPoints()
+    extra.reviewOutfits:SetPoint("TOPLEFT",window,"BOTTOMLEFT",135,48+skins.footerPadding)
+    extra.pauseRunway=button(overview,"Pause",98,300,-66,function() context.practiceAction("PAUSE") end)
     extra.voteBack=button(overview,"Previous",88,13,-63,function() extra.votePage=extra.votePage-1;UI.Refresh() end)
     extra.voteNext=button(overview,"Next",88,109,-63,function() extra.votePage=extra.votePage+1;UI.Refresh() end)
     extra.votePageLabel=label(overview,"",12,212,-70,muted,128)
@@ -1406,7 +1408,7 @@ function UI.Refresh()
     if not window then return end
     if extra.isMinimized then extra.showMiniStatus(p);return end
     if not window:IsShown() then return end
-    extra.gallery:Hide();extra.inlineOutfit:Hide();extra.reviewOutfits:Hide()
+    extra.gallery:Hide();extra.inlineOutfit:Hide();extra.reviewOutfits:Hide();extra.pauseRunway:Hide()
     local galleryPhase=p.phase=="runway" or p.phase=="runway_complete"
     if extra.galleryKey~=outfits.key then
         extra.galleryKey,extra.galleryIndex,extra.galleryOpen,extra.inlineIndex=outfits.key,1,nil,nil
@@ -1584,7 +1586,7 @@ function UI.Refresh()
     elseif p.phase == "runway" and p.runway then
         local r = p.runway
         title:SetText(("Round %d of %d: Runway"):format(p.round or 1,p.rounds or 1))
-        if p.practice and not p.preview then actionLabel(utility,"Pause") end
+        if p.practice and not p.preview then actionLabel(extra.pauseRunway,"Pause") end
         summary:SetText(("Presenting  %d of %d"):format(r.index,r.total))
         heroName:SetText(r.current)
         heroNext:SetText(r.upcoming and "Up next: " .. r.upcoming or "Final presentation")
@@ -1645,7 +1647,7 @@ function UI.Refresh()
     extra.portraitYou:SetShown(own==true)
     heroName:SetWidth(own and 325 or 391)
     local review=galleryPhase and outfits.complete>0 and not preferencesMode and not extra.viewPicker
-    heroNext:SetWidth(review and 204 or own and 325 or 391)
+    heroNext:SetWidth(extra.pauseRunway:IsShown() and 276 or own and 325 or 391)
     extra.reviewOutfits:SetShown(review)
     extra.showGallery(p)
     if not extra.galleryOpen and votePanel:IsShown() then extra.showInlineOutfit(p) end

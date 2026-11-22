@@ -707,6 +707,10 @@ for j,name in ipairs(order) do
         assert(savedLook.capturedGuid=="GUID-3" and not savedLook.autoDress)
         roster[3].appearanceID=222
         viewer.outOfView["GUID-3"]=true
+        local review=assert(viewer.find("Review outfits"))
+        local refresh=assert(viewer.find("Refresh"))
+        assert(review.parent==viewer.env.SYBAdminWindow and review.anchor[3]=="BOTTOMLEFT")
+        assert(review.anchor[5]==refresh.anchor[5] and review.anchor[4]>refresh.anchor[4]+refresh.width)
         assert(viewer.click("Review outfits"))
         assertLabel(viewer,"Outfit 1 of 1 · Runway order")
         assert(viewer.ns.Outfits.shown==savedLook and savedLook.binds==1 and savedLook.visuals[1].appearanceID==19)
@@ -739,6 +743,9 @@ leader.slash("announce winners Player3 Player4 Player5")
 leader.slash("announce winners Player4 Player3 Player5")
 assert(#leader.warnings==9 and leader.warnings[9]=="Congratulations to Player3-Realm Player4-Realm Player5-Realm!")
 assert(group[2].click("Review outfits"))
+local leadReview=assert(leader.find("Review outfits"))
+local beginVote=assert(leader.find("Begin voting"))
+assert(leadReview.anchor[5]==beginVote.anchor[5] and leadReview.anchor[4]+leadReview.width<beginVote.anchor[4])
 local gallery=group[2].env.SYBOutfitGallery
 assert(gallery:IsShown())
 assertLabel(group[2],"Outfit 1 of 5 · Runway order")
