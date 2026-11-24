@@ -9,11 +9,29 @@ local practiceVoter="Cinderstep"
 local unpack=unpack or table.unpack
 local sequence = 0
 local lastSession = 0
--- Small one-round alpha pool; the full catalog and custom theme setup come later.
 local alphaThemes = {"Royalty", "Out of This World", "Back from the Dead", "Heroes of Azeroth"}
-
-local function chooseAlphaTheme()
-    return alphaThemes[1 + math.floor(math.random() * #alphaThemes)]
+local liveThemes = {
+    "Royalty", "Out of This World", "Back from the Dead", "Heroes of Azeroth",
+    "A Night at the Opera", "Alchemist", "Ancient Guardian", "Arcane Academy", "Arctic Expedition",
+    "Autumn Leaves", "Battlefield Medic", "Black and White", "Clockwork", "Cloud Kingdom",
+    "Court Jester", "Dark Forest", "Day at the Faire", "Deep Sea", "Desert Wanderer",
+    "Dragon Rider", "Dreamwalker", "Elemental Fury", "Emerald Dream", "Enchanted Garden",
+    "Festival of Fire", "First Day Adventurer", "Forgotten Relic", "Frost and Flame", "Golden Hour",
+    "Grand Masquerade", "Green and Gold", "Haunted Manor", "High Seas", "Into the Wild",
+    "Midnight Market", "Monochrome", "Moonlight", "Mountain Explorer", "Mystic Librarian",
+    "Nobles and Rogues", "Northrend", "Old School Azeroth", "On the Red Carpet", "Pirate Crew",
+    "Rainy Day", "Retro Hero", "Shadows", "Starlight", "Treasure Hunter", "Winter Gala",
+}
+local raidThemes={}
+local function chooseLiveTheme(round)
+    if raidCustomTheme then return raidCustomTheme end
+    if not raidThemes[round] then
+        local used,options={},{}
+        for r=1,round-1 do if raidThemes[r] then used[raidThemes[r]]=true end end
+        for _,theme in ipairs(liveThemes) do if not used[theme] then options[#options+1]=theme end end
+        raidThemes[round]=options[math.random(#options)]
+    end
+    return raidThemes[round]
 end
 
 local function say(message)
@@ -114,8 +132,8 @@ local function onNetworkEvent(event, data)
     if event == "session_started" then
         resetLiveBallot()
         teamRequest=nil
-        raidCustomTheme=nil
-        state = Core.New(data.leader, 1)
+        raidCustomTheme,raidThemes=nil,{}
+        state = Core.New(data.leader, data.rounds)
         notice = nil
     elseif event == "authority_changed" then
         notice = "authority_changed"
@@ -149,7 +167,7 @@ local function onNetworkCommand(action, sender, message)
             local t=network.teams
             local ready,reason=ns.Teams.Readiness(t,network.roster)
             if not ready then return false,reason end
-            local contest=Core.New(state.admin,1)
+            local contest=Core.New(state.admin,network.rounds)
             contest.minContestants=3
             for id=1,t.span do
                 if t.rows[id] then
@@ -167,6 +185,7 @@ local function onNetworkCommand(action, sender, message)
                 order[#order + 1] = member.name
             end
         end
+        state.rounds=network.rounds
         local ok,reason=Core.Start(state,Core.Shuffle(order,math.random),projection.presence.addon_pending + projection.presence.unknown)
         return ok,reason,ok and state.order or nil
     end
@@ -184,15 +203,30 @@ local function onNetworkCommand(action, sender, message)
         local ok,reason=Core.CloseVoting(state,2)
         if not ok then return false,reason end
         local results={}
-        local scores=state.scores[state.round]
-        for _,name in ipairs(state.order) do results[#results+1]={name=name,average=scores[name]} end
+        local scores,cumulative=state.scores[state.round],Core.Cumulative(state)
+        for _,name in ipairs(state.order) do results[#results+1]={name=name,average=scores[name],cumulative=cumulative[name]} end
         table.sort(results,function(a,b)
             if a.average==b.average then return a.name<b.name end
             return (a.average or 0)>(b.average or 0)
         end)
-        for _,r in ipairs(results) do if r.average then r.score=math.floor(r.average*100+.5) end end
+        for _,r in ipairs(results) do
+            if r.average then r.score=math.floor(r.average*100+.5) end
+            if r.cumulative then r.cumulative=math.floor(r.cumulative*100+.5) end
+        end
         return true,nil,results
     end
+    if action=="NEXT_ROUND" then
+        local ok,reason=Core.NextRound(state)
+        if ok then state.order=Core.Shuffle(state.order,math.random) end
+        return ok,reason,ok and state.order or nil
+    end
+    local awardsAction=({OPEN_AWARDS=Core.OpenAwards,CONFIRM_AWARDS=Core.ConfirmAwards,REVEAL_AWARD=Core.RevealAward})[action]
+    if awardsAction then
+        local ok,reason=awardsAction(state)
+        return ok,reason,ok and state.awards or nil
+    end
+    if action=="PAUSE" then return Core.Pause(state) end
+    if action=="RESUME" then return Core.Resume(state) end
     if action=="END" then return Core.End(state) end
     return false, "unsupported_command"
 end
@@ -212,7 +246,7 @@ local function setupNetwork()
             local ok, result = pcall(C_ChatInfo.SendAddonMessage, prefix, message, channel, target)
             return ok and result == Enum.SendAddonMessageResult.Success
         end,
-    }, { onEvent=onNetworkEvent, onCommand=onNetworkCommand, chooseTheme=function() return raidCustomTheme or chooseAlphaTheme() end })
+    }, { onEvent=onNetworkEvent, onCommand=onNetworkCommand, chooseTheme=chooseLiveTheme })
     local ok, reason = candidate:Register()
     if not ok then say("Raid communications unavailable: " .. reason); return false end
     network = candidate
@@ -526,9 +560,20 @@ local function view()
             p.runwayOrder=nil
         end
     end
-    if liveBallot.session~=p.sessionId then
+    if liveBallot.session~=p.sessionId or liveBallot.round~=p.round then
+        if liveBallot.id and network then network.pending[liveBallot.id]=nil end
         resetLiveBallot()
-        liveBallot.session=p.sessionId
+        liveBallot.session,liveBallot.round=p.sessionId,p.round
+    end
+    if p.isLeader and p.phase=="final_results" and state and state.awards and not state.awards.confirmed then
+        p.tieRolls={}
+        local a=state.awards
+        for _,r in ipairs(a.results) do
+            if a.ties[r.name] then
+                local team=network.teams and network.teams.rows[ns.Teams.EntryID(r.name)]
+                p.tieRolls[#p.tieRolls+1]={entry=r.name,name=team and team.name or r.name,value=a.rolls[r.name],group=a.ties[r.name]}
+            end
+        end
     end
     local voting=network and network.voting
     if voting and (p.phase=="voting" or p.phase=="round_results") then
@@ -560,7 +605,7 @@ local function getVotePage(page)
         local teamID=network.teams and ns.Teams.EntryID(row.guid)
         local team=teamID and network.teams.rows[teamID]
         display[i]={guid=row.guid,index=row.index,name=teamID and (team and team.name or "Team "..teamID) or names[row.guid],
-            score=row.score,team=teamID,ownTeam=teamID and network.teams.byMember[UnitGUID("player")]==teamID,
+            score=row.score,cumulative=row.cumulative,masked=row.guid=="-",team=teamID,ownTeam=teamID and network.teams.byMember[UnitGUID("player")]==teamID,
             teamData=team,teamSize=teamID and network.teams.size,memberNames=teamID and names}
     end
     return display
@@ -642,6 +687,12 @@ local function doTeamAction(op,slot,other,value)
         end)
     end
     return ok,reason
+end
+
+local function setLiveRounds(n)
+    if practice or not network then return false,"wrong_phase" end
+    network:RefreshRoster()
+    return network:SetRounds(n)
 end
 
 local function setPreparationSeconds(seconds)
@@ -733,11 +784,13 @@ local function adminAction(action)
     if not network then return false,"not_registered" end
     local ok, reason = network:AdminCommand(action,commandId())
     if not ok then return false,reason end
-    if action=="START" and network.preparation then
-        phaseWarning("preparation","Preparation is open. Theme: "..network.preparation.theme..".")
+    local round=network.round
+    if (action=="START" or action=="NEXT_ROUND") and network.preparation then
+        phaseWarning("preparation_"..round,("Round %d of %d preparation is open. Theme: %s."):format(
+            round,network.rounds,network.preparation.theme))
     elseif action=="BEGIN_RUNWAY" or action=="ADVANCE" then
         if network.phase=="runway_complete" then
-            phaseWarning("runway_complete","The runway is complete.")
+            phaseWarning("runway_complete_"..round,("Round %d runway is complete."):format(round))
         else
             local key,message=presenterWarning(state,action=="BEGIN_RUNWAY")
             if key then if network.teams then
@@ -749,14 +802,18 @@ local function adminAction(action)
         end
     end
     local id, version = network.sessionId, network.version
-    if action=="BEGIN_VOTING" then
-        phaseWarning("voting_open","Voting is open for 60 seconds.")
+    if action=="BEGIN_VOTING" or (action=="RESUME" and network.phase=="voting") then
+        if action=="BEGIN_VOTING" then
+            phaseWarning("voting_open_"..round,("Round %d voting is open for %d seconds."):format(round,Network.VOTING_SECONDS))
+        end
+        local vote=network.voting
         local function closeAtDeadline()
-            if not network or network.sessionId~=id or network.phase~="voting" or not network:IsAuthority() then return end
-            local remaining=network.voting.endsAt-GetServerTime()
+            if not network or network.sessionId~=id or network.round~=round or network.phase~="voting"
+                or network.version~=version or network.voting~=vote or not network:IsAuthority() then return end
+            local remaining=vote.endsAt-GetServerTime()
             if remaining>0 then C_Timer.After(remaining,closeAtDeadline) else run(adminAction,"CLOSE_VOTING") end
         end
-        C_Timer.After(Network.VOTING_SECONDS,closeAtDeadline)
+        C_Timer.After(math.max(0,vote.endsAt-GetServerTime()),closeAtDeadline)
     elseif action=="CLOSE_VOTING" then
         local results=network.voting.results
         local leaders={}
@@ -767,8 +824,21 @@ local function adminAction(action)
             end
         end
         local names=table.concat(leaders,", ")
-        phaseWarning("voting_closed","Voting is closed. "..(#leaders==0 and "No contestant qualified."
+        phaseWarning("voting_closed_"..round,("Round %d voting is closed. "):format(round)..(#leaders==0 and "No entry qualified."
             or (#names<=165 and "Top score: "..names.."." or "See the tied leaders in the round results.")))
+    elseif action=="OPEN_AWARDS" and not next(state.awards.ties) then
+        -- Confirm automatically only when there are no podium ties to verify.
+        return adminAction("CONFIRM_AWARDS")
+    elseif action=="REVEAL_AWARD" then
+        local a=state.awards
+        local slot=math.min(3,#a.results)-a.revealed+1
+        local function entryName(entry)
+            local team=network.teams and network.teams.rows[ns.Teams.EntryID(entry.name)]
+            return team and team.name or entry.name
+        end
+        local message=("%s place: %s!"):format(({"First","Second","Third"})[slot],entryName(a.results[slot]))
+        if slot==1 and a.results[4] then message=message.." Honorable Mention: "..entryName(a.results[4]).."." end
+        phaseWarning("placement_"..slot,message)
     end
     local function publish()
         if not practice and network.sessionId==id and network.version==version then
@@ -779,6 +849,14 @@ local function adminAction(action)
     end
     if not publish() then C_Timer.After(Network.SEND_WINDOW+0.25,publish) end
     return true
+end
+
+local function recordLiveRoll(entry,value)
+    if practice or not state or not network then return false,"wrong_phase" end
+    network:RefreshRoster()
+    if not network:IsAuthority() or network.originalLeader~=network.leader then return false,"not_raid_leader" end
+    if network.phase~="final_results" then return false,"wrong_phase" end
+    return Core.RecordRoll(state,entry,value)
 end
 
 local function announceWinners(input)
@@ -831,6 +909,14 @@ frame:SetScript("OnEvent", function(_, event, ...)
             beginRunway=function() run(adminAction,"BEGIN_RUNWAY") end,
             beginVoting=function() run(adminAction,"BEGIN_VOTING") end,
             endContest=function() run(adminAction,"END") end,
+            setLiveRounds=function(n) return run(setLiveRounds,n) end,
+            nextRound=function() run(adminAction,"NEXT_ROUND") end,
+            openAwards=function() run(adminAction,"OPEN_AWARDS") end,
+            confirmAwards=function() run(adminAction,"CONFIRM_AWARDS") end,
+            revealAward=function() run(adminAction,"REVEAL_AWARD") end,
+            recordRoll=function(...) return run(recordLiveRoll,...) end,
+            pauseLive=function() run(adminAction,"PAUSE") end,
+            resumeLive=function() run(adminAction,"RESUME") end,
             setContestFormat=function(size)
                 if not practice and (not network or not network.sessionId or network.phase=="ended") then
                     teamConfig=ns.Teams.ValidSize(size) and size or nil

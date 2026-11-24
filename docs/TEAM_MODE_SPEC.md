@@ -41,6 +41,6 @@ The contestant who successfully creates the team supplies its initial name and a
 
 ### Alpha delivery notes
 
-- Team mode uses one live round and the existing 60-second live ballot. The current Team leader must transfer leadership before voluntarily leaving a nonempty team. Disconnect handling is still the existing alpha policy; the raid leader does not receive naming or promotion permissions.
+- In 1.0.0, Team mode supports one to five live rounds with a separate 60-second ballot each round. The scored entry is the team, not an individual member. Final scores are the unweighted mean of the unrounded per-round team averages; teams must score in every round to place. The current Team leader must transfer leadership before voluntarily leaving a nonempty team. The raid leader never gains naming or promotion permissions.
 - The offline shortcut `/syb teampractice` starts a preassembled three-duo example with a sample spectator ballot. Use a simulated or real raid to exercise formation and leadership transfers. The practice tally is illustrative; live qualification still requires at least two ratings.
 - All raid clients must use the same Team-capable build (protocol schema 8). Full-body Preview may fall back to the member’s name/face. Use the next planned Retail test to verify actual client rendering and packet delivery.

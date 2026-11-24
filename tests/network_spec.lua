@@ -253,8 +253,8 @@ rejects("Member-Realm","second","05000","ballot_already_submitted")
 now=now+60
 rejects("Member-Realm","expired","05000","voting_closed")
 assert(Network.Encode({type="PAGE",session_id=string.rep("9",40),version=9999,page=10,
-    rows=table.concat({string.rep("1",32)..":500",string.rep("2",32)..":500",
-        string.rep("3",32)..":500",string.rep("4",32)..":500"},",")}))
+    rows=table.concat({string.rep("1",32)..":500:500",string.rep("2",32)..":500:500",
+        string.rep("3",32)..":500:500",string.rep("4",32)..":500:500"},",")}))
 for _,packet in ipairs(voterWire) do
     if packet.channel=="RAID" then assert(not packet.message:find("ratings=",1,true)) end
 end

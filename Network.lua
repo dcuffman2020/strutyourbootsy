@@ -9,8 +9,8 @@ Network.__index = Network
 ns.Network = Network
 
 Network.PREFIX = "SYBDEV02"
-Network.SCHEMA = 8
-Network.CAPABILITY = "raid-comms-v8"
+Network.SCHEMA = 9
+Network.CAPABILITY = "raid-comms-v9"
 Network.PREPARATION_SECONDS = 120
 Network.PREPARATION_OPTIONS = {120,180,240,300}
 Network.PREPARATION_MAX = Network.PREPARATION_OPTIONS[#Network.PREPARATION_OPTIONS]
@@ -28,13 +28,14 @@ function Network.ValidRunwaySeconds(seconds)
 end
 Network.MAX_BYTES = 255
 Network.VOTING_SECONDS, Network.VOTE_PAGE_SIZE = 60, 4
+Network.AUTHORITY_TIMEOUT = 300
 Network.DISCOVERY_SECONDS = 10
 Network.MAX_RECENT_COMMANDS = 128
 Network.SEND_BURST = 8
 Network.SEND_WINDOW = 5
 
 local knownTypes = { HELLO=true, WELCOME=true, STATE=true, CMD=true, ACK=true, REJECT=true, PING=true, PAGE_REQ=true, PAGE=true, TREQ=true, TDATA=true }
-local adminActions = { START=true, BEGIN_RUNWAY=true, PAUSE=true, RESUME=true, ADVANCE=true, END=true, BEGIN_VOTING=true, CLOSE_VOTING=true }
+local adminActions = { START=true, BEGIN_RUNWAY=true, PAUSE=true, RESUME=true, ADVANCE=true, END=true, BEGIN_VOTING=true, CLOSE_VOTING=true, NEXT_ROUND=true, OPEN_AWARDS=true, CONFIRM_AWARDS=true, REVEAL_AWARD=true }
 local rejectReasons = {
     admin_cannot_participate=true, already_registered=true, disconnected=true,
     duplicate_result=true, identity_mismatch=true, invalid_ack=true,
@@ -49,11 +50,13 @@ local rejectReasons = {
     team_name_invalid=true,team_already_joined=true,team_name_taken=true,team_full=true,team_not_found=true,
     not_team_leader=true,team_invalid_nominee=true,team_nomination_pending=true,team_no_nomination=true,
     team_transfer_before_leave=true,team_unassigned=true,team_need_three=true,team_incomplete=true,
+    invalid_roll=true,rolls_required=true,reroll_required=true,not_finished=true,
     voting_closed=true, not_eligible=true, admin_cannot_vote=true, self_vote=true,
     ballot_already_submitted=true, invalid_ballot=true, empty_ballot=true,
     registration_closed=true, minimum_five_contestants=true, registration_pending=true,
     invalid_runway_order=true, preparation_unavailable=true, preparation_running=true,
 }
+local pausablePhases={preparation=true,runway=true,runway_complete=true,voting=true,round_results=true}
 local validPhases = { registration=true, preparation=true, runway=true, runway_complete=true, voting=true,
     round_results=true, final_results=true, paused=true, ended=true }
 
@@ -131,8 +134,8 @@ end
 
 local allowedFields = {
     HELLO={capability=true}, PING={session_id=true, version=true},
-    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true, vote_ends=true, vote_total=true, voted=true, sz=true, tr=true, tc=true},
-    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true, vote_ends=true, vote_total=true, sz=true, tr=true, tc=true},
+    WELCOME={session_id=true, version=true, phase=true, leader_guid=true, role=true, late=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true, vote_ends=true, vote_total=true, vv=true, pp=true, why=true, rn=true, rc=true, ac=true, rv=true, cf=true, voted=true, sz=true, tr=true, tc=true},
+    STATE={session_id=true, version=true, phase=true, theme=true, prep_ends=true, pos=true, total=true, cur=true, nxt=true, run_ends=true, vote_ends=true, vote_total=true, vv=true, pp=true, why=true, rn=true, rc=true, ac=true, rv=true, cf=true, sz=true, tr=true, tc=true},
     CMD={session_id=true, command_id=true, expected_version=true, action=true, role=true, ratings=true, op=true, slot=true, other=true, txt=true},
     TREQ={sid=true,i=true}, TDATA={sid=true,i=true,tr=true,tc=true,d=true},
     PAGE_REQ={session_id=true,version=true,page=true},
@@ -153,7 +156,7 @@ function Network.NormalizeCustomTheme(text)
 end
 
 local function validGuid(x)
-    return type(x) == "string" and #x <= 32 and x:match("^[%w%-]+$") ~= nil
+    return type(x) == "string" and x~="-" and #x <= 32 and x:match("^[%w%-]+$") ~= nil
 end
 
 local function validateFields(message)
@@ -161,7 +164,7 @@ local function validateFields(message)
     if not allowed then return false, "unknown_command" end
     for key, value in pairs(message) do
         if key ~= "type" and key ~= "schema" and not allowed[key] then return false, "malformed_payload" end
-        if type(value) == "string" and #value > (key=="rows" and 148 or key=="d" and 200 or 80) then return false, "malformed_payload" end
+        if type(value) == "string" and #value > (key=="rows" and (Network.VOTE_PAGE_SIZE*41-1) or key=="d" and 200 or 80) then return false, "malformed_payload" end
     end
     if message.type == "HELLO" and message.capability ~= Network.CAPABILITY then return false, "unsupported_client" end
     if message.type == "PING" and (not message.session_id or not message.version) then return false, "malformed_payload" end
@@ -195,14 +198,34 @@ local function validateFields(message)
     end
     if message.type=="WELCOME" or message.type=="STATE" then
         local voting=message.phase=="voting"
-        local summary=voting or message.phase=="round_results"
+        local final=message.phase=="final_results"
+        local summary=voting or message.phase=="round_results" or final
+        local rn,rc=integer(message.rn or 1,0),integer(message.rc or 1,1)
+        if not rn or not rc or rc>5 or rn>rc or (final and rn~=rc) then return false,"malformed_payload" end
+        local paused=message.phase=="paused"
+        if paused then
+            if not pausablePhases[message.pp] or (message.why~="host" and message.why~="contestant" and message.why~="authority") then
+                return false,"malformed_payload"
+            end
+        elseif message.pp or message.why then return false,"malformed_payload" end
+        local vv=message.vv and integer(message.vv,1)
+        if message.vv and (not vv or vv>tonumber(message.version) or not (voting or (paused and message.pp=="voting"))) then
+            return false,"malformed_payload"
+        end
+        if final then
+            local ac,rv=integer(message.ac,0),integer(message.rv,0)
+            if not ac or ac>4 or not rv or rv>math.min(3,ac) or (message.cf and message.cf~="1")
+                or (rv>0 and not message.cf) then return false,"malformed_payload" end
+        elseif message.ac or message.rv or message.cf then return false,"malformed_payload" end
         if summary then
             local total=integer(message.vote_total,message.sz and 3 or 5)
             if not total or total>39 or (voting and not integer(message.vote_ends,1))
                 or (not voting and message.vote_ends) or (message.voted and message.voted~="1") then
                 return false,"malformed_payload"
             end
-        elseif message.vote_total or message.vote_ends or message.voted then return false,"malformed_payload" end
+        elseif message.vote_total or message.vote_ends or (message.voted and not (paused and message.pp=="voting" and message.voted=="1")) then
+            return false,"malformed_payload"
+        end
     end
     if message.type=="PAGE" or message.type=="PAGE_REQ" then
         local page=integer(message.page,1)
@@ -314,6 +337,37 @@ function Network:RefreshRoster()
         self.sessionId = nil
         self.pending = {}
     end
+    if self.sessionId and self.phase~="ended" and self.originalLeader==leader and newAuthority then
+        if not newAuthority.connected then
+            if not self.authorityLostAt then
+                local session=self.sessionId
+                self.authorityLostAt=self:_now()
+                if self.api.after then self.api.after(Network.AUTHORITY_TIMEOUT,function()
+                    if self.sessionId==session and self.authorityLostAt then self:RefreshRoster() end
+                end) end
+            elseif self:_now()-self.authorityLostAt>=Network.AUTHORITY_TIMEOUT then
+                self:EndSession("authority_timeout")
+                self.authorityLostAt=nil
+            end
+        else
+            local returning=self.authorityLostAt~=nil
+            self.authorityLostAt=nil
+            if self:IsAuthority() and pausablePhases[self.phase] and
+                (returning or (self.phase~="round_results" and self:RunwayBlocked())) then
+                local ok=self:_handleCommand({action="PAUSE",command_id="auto-pause-"..self.version,
+                    session_id=self.sessionId,expected_version=self.version,
+                    pauseCause=returning and "authority" or "contestant"},self.leader)
+                if ok then
+                    local session,version=self.sessionId,self.version
+                    if not self:BroadcastContest() and self.api.after then
+                        self.api.after(Network.SEND_WINDOW+.25,function()
+                            if self.sessionId==session and self.version==version then self:BroadcastContest() end
+                        end)
+                    end
+                end
+            end
+        end
+    end
     self:_emit("roster_changed", self:GetProjection())
     return nextRoster
 end
@@ -366,17 +420,34 @@ function Network:AdminCommand(action, commandId)
     }, self.leader)
 end
 
+function Network:SetRounds(rounds)
+    if not self:IsAuthority() or self.originalLeader~=self.leader then return false,"not_raid_leader" end
+    if not self.sessionId or self.phase~="registration" then return false,"wrong_phase" end
+    if type(rounds)~="number" or not integer(rounds,1) or rounds>5 then return false,"invalid_setting" end
+    self.rounds=rounds
+    return true
+end
+
 function Network:StartContest(commandId)
     return self:AdminCommand("START", commandId)
 end
 
 local function stateFields(self, msg)
-    if self.teams then msg.sz,msg.tr,msg.tc=self.teams.size,self.teams.revision,self.teams.span end
-    if self.voting and (self.phase=="voting" or self.phase=="round_results") then
-        msg.vote_total=self.voting.total
-        if self.phase=="voting" then msg.vote_ends=self.voting.endsAt end
+    msg.rn,msg.rc=self.round or 0,self.rounds or 1
+    if self.phase=="paused" then
+        msg.pp,msg.why=self.pausedPhase,self.pauseCause
+        if self.pausedPhase=="voting" and self.voting then msg.vv=self.voting.version end
     end
-    local prep, r = self.preparation, self.runway
+    if self.awards and self.phase=="final_results" then
+        msg.ac,msg.rv,msg.cf=math.min(4,#self.awards.results),self.awards.revealed,self.awards.confirmed and 1 or nil
+    end
+    if self.teams then msg.sz,msg.tr,msg.tc=self.teams.size,self.teams.revision,self.teams.span end
+    if self.voting and (self.phase=="voting" or self.phase=="round_results" or self.phase=="final_results") then
+        msg.vote_total=self.voting.total
+        if self.phase=="voting" then msg.vote_ends,msg.vv=self.voting.endsAt,self.voting.version end
+    end
+    local prep, r
+    if self.phase~="paused" then prep,r=self.preparation,self.runway end
     msg.theme, msg.prep_ends = prep and prep.theme, prep and prep.endsAt
     if r then msg.pos,msg.total,msg.cur,msg.nxt,msg.run_ends=r.index,r.total,r.current,r.upcoming,r.endsAt end
     return msg
@@ -386,7 +457,7 @@ end
 -- Poll/WELCOME provides eventual recovery if this packet is missed.
 function Network:BroadcastContest()
     if not self:IsAuthority() or self.originalLeader ~= self.leader then return false, "not_authority" end
-    if not self.preparation and not self.runway and not self.voting and self.phase~="ended" then return false, "wrong_phase" end
+    if not self.preparation and not self.runway and not self.voting and self.phase~="paused" and self.phase~="ended" then return false, "wrong_phase" end
     return self:Send(stateFields(self,{type="STATE", session_id=self.sessionId, version=self.version, phase=self.phase}), "RAID")
 end
 
@@ -396,19 +467,23 @@ function Network:Poll()
     return self:Send({type="HELLO", capability=Network.CAPABILITY}, "WHISPER", self.leader)
 end
 
-function Network:StartSession(sessionId, teamSize)
+function Network:StartSession(sessionId, teamSize, rounds)
     if not self:IsAuthority() then return false, "not_raid_leader" end
     if self.incompleteRoster then return false, "discovery_pending" end
     if not self.registered then return false, "not_registered" end
     if self.sessionId and self.phase ~= "ended" then return false, "session_active" end
     if type(sessionId) ~= "string" or sessionId == "" or #sessionId > 40 then return false, "invalid_session" end
     if teamSize~=nil and (not Teams or not Teams.ValidSize(teamSize)) then return false,"invalid_role" end
+    if rounds~=nil and (type(rounds)~="number" or not integer(rounds,1) or rounds>5) then return false,"invalid_setting" end
     self.teams=Teams and Teams.New(teamSize)
     self.teamSent={}
     self.sessionId, self.version, self.phase = sessionId, 1, "registration"
     self.originalLeader = self.leader
     self.discoveryStarted, self.lastRejected, self.preparation, self.runway, self.contestantGuids = nil, nil, nil, nil, nil
     self.voting,self.votePages,self.voted,self.sentVotePages,self.galleryOrder=nil,{},nil,{},nil
+    self.round,self.rounds,self.awards=0,rounds or 1,nil
+    self.pausedPhase,self.pauseCause,self.pauseRemaining,self.authorityLostAt=nil,nil,nil,nil
+    self.awardCount,self.awardRevealed,self.awardsConfirmed=nil,nil,nil
     self.runwaySeconds=Network.RUNWAY_SECONDS
     self.preparationSeconds=Network.PREPARATION_SECONDS
     self.absent = {}
@@ -432,6 +507,8 @@ function Network:EndSession(reason)
     if not self.sessionId then return false, "no_session" end
     self.phase, self.preparation, self.runway, self.contestantGuids = "ended", nil, nil, nil
     self.voting,self.votePages,self.voted=nil,{},nil
+    self.awards,self.awardCount,self.awardRevealed,self.awardsConfirmed=nil,nil,nil,nil
+    self.pausedPhase,self.pauseCause,self.pauseRemaining,self.authorityLostAt=nil,nil,nil,nil
     self.version = self.version + 1
     self:_emit("session_ended", { reason=reason, sessionId=self.sessionId, version=self.version })
     return true
@@ -464,7 +541,8 @@ function Network:Request(action, commandId, fields)
     if type(commandId) ~= "string" or commandId == "" or #commandId > 40 then return false, "invalid_command_id" end
     local message = copy(fields)
     message.type, message.action, message.command_id = "CMD", action, commandId
-    message.session_id, message.expected_version = self.sessionId, self.version
+    message.session_id, message.expected_version = self.sessionId,
+        action=="VOTE" and self.voting and self.voting.version or self.version
     local ok, reason = self:Send(message, "WHISPER", self.leader)
     if ok then self.pending[commandId] = { message=message, status="pending", attempts=1 } end
     return ok, reason
@@ -575,7 +653,7 @@ function Network:_handleCommand(message, sender)
         end
         if vote.eligible[sender]~=member.guid then return self:_reject(sender,id,"not_eligible") end
         if vote.accepted[member.guid] then return self:_reject(sender,id,"ballot_already_submitted") end
-        if expected~=self.version then return self:_reject(sender,id,"snapshot_mismatch") end
+        if expected~=(vote.version or self.version) then return self:_reject(sender,id,"snapshot_mismatch") end
         local wire=message.ratings
         if type(wire)~="string" or #wire~=vote.total or wire:find("[^0-5]") then return self:_reject(sender,id,"invalid_ballot") end
         local ratings={}
@@ -592,8 +670,9 @@ function Network:_handleCommand(message, sender)
         local ok,reason=self.callbacks.onCommand("VOTE",sender,{ratings=ratings})
         if not ok then return self:_reject(sender,id,reason) end
         vote.accepted[member.guid]=true
-        self:_remember(replayKey,{ok=true,version=self.version,vote=true})
-        self:_confirmVote(sender,id,self.version)
+        local voteVersion=vote.version or self.version
+        self:_remember(replayKey,{ok=true,version=voteVersion,vote=true})
+        self:_confirmVote(sender,id,voteVersion)
         self:_emit("ballot_accepted",{})
         return true
     end
@@ -613,10 +692,11 @@ function Network:_handleCommand(message, sender)
         end
         if self:RunwayBlocked() then return self:_reject(sender,id,"disconnected") end
     end
-    if (action == "PAUSE" and (self.phase == "paused" or self.phase == "ended")) or
+    if (action == "PAUSE" and not pausablePhases[self.phase]) or
        (action == "RESUME" and self.phase ~= "paused") or (action == "ADVANCE" and self.phase ~= "runway") then
         return self:_reject(sender, id, "wrong_phase")
     end
+    if action=="RESUME" and self:RunwayBlocked() then return self:_reject(sender,id,"disconnected") end
     if action == "ROLE" then
         if self.phase ~= "registration" then return self:_reject(sender, id, "wrong_phase") end
         if sender == self.leader then return self:_reject(sender, id, "admin_cannot_participate") end
@@ -627,18 +707,27 @@ function Network:_handleCommand(message, sender)
     if action=="CLOSE_VOTING" and (self.phase~="voting" or not self.voting or self.api.serverNow()<self.voting.endsAt) then
         return self:_reject(sender,id,"wrong_phase")
     end
-    if action=="END" and self.phase~="round_results" then return self:_reject(sender,id,"wrong_phase") end
+    if action=="NEXT_ROUND" then
+        if self.phase~="round_results" or (self.round or 1)>=(self.rounds or 1) then return self:_reject(sender,id,"wrong_phase") end
+        if self:RunwayBlocked() then return self:_reject(sender,id,"disconnected") end
+    end
+    if action=="OPEN_AWARDS" and (self.phase~="round_results" or self.round~=self.rounds) then return self:_reject(sender,id,"not_finished") end
+    if (action=="CONFIRM_AWARDS" or action=="REVEAL_AWARD") and self.phase~="final_results" then return self:_reject(sender,id,"wrong_phase") end
+    if action=="END" and (self.phase~="final_results" or not self.awards or not self.awards.confirmed
+        or self.awards.revealed<math.min(3,#self.awards.results)) then return self:_reject(sender,id,"wrong_phase") end
     local preparation, frozen
-    if action == "START" then
-        local theme = self.callbacks.chooseTheme and self.callbacks.chooseTheme()
+    if action=="START" or action=="NEXT_ROUND" then
+        local theme = self.callbacks.chooseTheme and self.callbacks.chooseTheme(action=="START" and 1 or self.round+1)
         local startedAt = self.api.serverNow and integer(self.api.serverNow(), 1)
         if not validTheme(theme) or not startedAt then return self:_reject(sender, id, "preparation_unavailable") end
         preparation = {theme=theme, endsAt=startedAt + (self.preparationSeconds or Network.PREPARATION_SECONDS)}
-        frozen = {}
-        for name, member in pairs(self.roster) do
-            if member.role == "contestant" then
-                if not validGuid(member.guid) then return self:_reject(sender,id,"invalid_runway_order") end
-                frozen[name] = member.guid
+        if action=="START" then
+            frozen = {}
+            for name, member in pairs(self.roster) do
+                if member.role == "contestant" then
+                    if not validGuid(member.guid) then return self:_reject(sender,id,"invalid_runway_order") end
+                    frozen[name] = member.guid
+                end
             end
         end
     end
@@ -654,9 +743,29 @@ function Network:_handleCommand(message, sender)
         self.roster[sender].presence = "addon_ready"
     elseif action == "START" then
         self.phase, self.preparation, self.contestantGuids = "preparation", preparation, frozen
+        self.round=1
         self.galleryOrder=turn
+    elseif action=="NEXT_ROUND" then
+        self.round=self.round+1
+        self.phase,self.preparation,self.runway,self.galleryOrder="preparation",preparation,nil,turn
+        self.voting,self.votePages,self.voted,self.sentVotePages=nil,{},false,{}
+    elseif action=="OPEN_AWARDS" or action=="CONFIRM_AWARDS" or action=="REVEAL_AWARD" then
+        self.phase,self.awards,self.votePages,self.sentVotePages="final_results",turn,{},{}
     elseif action=="END" then
         self.phase,self.voting,self.votePages,self.voted="ended",nil,{},nil
+        self.awards,self.awardCount,self.awardRevealed,self.awardsConfirmed=nil,nil,nil,nil
+    elseif action=="PAUSE" then
+        self.pausedPhase,self.pauseCause=self.phase,message.pauseCause or "host"
+        local timer=(self.phase=="preparation" and self.preparation) or (self.phase=="runway" and self.runway)
+            or (self.phase=="voting" and self.voting)
+        self.pauseRemaining=timer and timer.endsAt and math.max(0,timer.endsAt-self.api.serverNow()) or nil
+        self.phase,self.votePages="paused",{}
+    elseif action=="RESUME" then
+        self.phase=self.pausedPhase
+        local timer=(self.phase=="preparation" and self.preparation) or (self.phase=="runway" and self.runway)
+            or (self.phase=="voting" and self.voting)
+        if timer and self.pauseRemaining then timer.endsAt=self.api.serverNow()+self.pauseRemaining end
+        self.pausedPhase,self.pauseCause,self.pauseRemaining=nil,nil,nil
     elseif action=="BEGIN_VOTING" then
         local eligible={}
         for name,m in pairs(self.roster) do
@@ -666,8 +775,9 @@ function Network:_handleCommand(message, sender)
             if name~=self.leader and m.role and not m.joinedAfterStart then eligible[name]=m.guid end
         end
         self.phase,self.runway="voting",nil
-        self.voting={endsAt=self.api.serverNow()+Network.VOTING_SECONDS,total=#turn,order=turn,eligible=eligible,accepted={}}
-        self.votePages={}
+        self.voting={endsAt=self.api.serverNow()+Network.VOTING_SECONDS,total=#turn,order=turn,
+            eligible=eligible,accepted={},version=self.version+1}
+        self.votePages,self.voted,self.sentVotePages={},false,{}
     elseif action=="CLOSE_VOTING" then
         self.phase="round_results"
         self.voting.results=turn
@@ -687,23 +797,38 @@ function Network:_handleCommand(message, sender)
     return true
 end
 
+local pagePhases={runway=true,runway_complete=true,voting=true,round_results=true,final_results=true}
+
 function Network:GetVotePage(page)
+    if not pagePhases[self.phase] or self.authorityLostAt then return nil end
     local vote=self.voting or (self.runway and self.galleryOrder and {
         total=self.runway.index-(self.phase=="runway" and 1 or 0),order=self.galleryOrder})
     if not self:IsAuthority() then return (self.votePages or {})[page] end
     if not vote then return nil end
+    if self.phase=="final_results" then
+        if page~=1 or not self.awards then return nil end
+        local a=self.awards
+        local podium=math.min(3,#a.results)
+        local out={}
+        for i=1,math.min(4,#a.results) do
+            local revealed=a.confirmed and ((i<=podium and i>podium-a.revealed) or (i==4 and a.revealed==podium))
+            local name=revealed and a.results[i].name
+            out[i]={guid=name and (self.teams and name or self.contestantGuids[name]) or "-",index=i}
+        end
+        return #out>0 and out or nil
+    end
     local result={}
     local first=(page-1)*Network.VOTE_PAGE_SIZE+1
     for i=first,math.min(first+Network.VOTE_PAGE_SIZE-1,vote.total) do
         local item=vote.results and vote.results[i]
         local name=item and item.name or vote.order[i]
-        result[#result+1]={guid=self.teams and name or self.contestantGuids[name],index=i,score=item and item.score}
+        result[#result+1]={guid=self.teams and name or self.contestantGuids[name],index=i,score=item and item.score,cumulative=item and item.cumulative}
     end
     return #result>0 and result or nil
 end
 
 function Network:RequestVotePage(page)
-    if not (self.voting or self.runway) or not self.sessionId then return false end
+    if not pagePhases[self.phase] or self.authorityLostAt or not self.sessionId then return false end
     return self:Send({type="PAGE_REQ",session_id=self.sessionId,version=self.version,page=page},"WHISPER",self.leader)
 end
 
@@ -716,7 +841,7 @@ function Network:BroadcastVotePage(page)
     self.sentVotePages=self.sentVotePages or {}
     if self.sentVotePages[key] and self:_now()-self.sentVotePages[key]<2 then return true end
     local parts={}
-    for _,r in ipairs(rows) do parts[#parts+1]=r.guid..":"..(r.score and tostring(r.score) or "0") end
+    for _,r in ipairs(rows) do parts[#parts+1]=r.guid..":"..(r.score and tostring(r.score) or "0")..":"..(r.cumulative and tostring(r.cumulative) or "0") end
     local ok=self:Send({type="PAGE",session_id=self.sessionId,version=self.version,page=page,rows=table.concat(parts,",")},"RAID")
     if ok then self.sentVotePages[key]=self:_now() end
     return ok
@@ -778,7 +903,7 @@ function Network:Receive(prefix, wire, channel, sender)
     if not message then return self:_reject(sender, nil, reason) end
     local valid, validationReason = validateFields(message)
     if not valid then return self:_reject(sender, message.type == "CMD" and message.command_id or nil, validationReason) end
-    local raidPrepUpdate = channel == "RAID" and message.type == "STATE" and (message.phase == "preparation" or message.phase == "runway" or message.phase == "runway_complete" or message.phase=="voting" or message.phase=="round_results" or message.phase=="ended")
+    local raidPrepUpdate = channel == "RAID" and message.type == "STATE" and (message.phase == "preparation" or message.phase == "runway" or message.phase == "runway_complete" or message.phase=="voting" or message.phase=="round_results" or message.phase=="final_results" or message.phase=="paused" or message.phase=="ended")
     if message.type ~= "HELLO" and channel ~= "WHISPER" and not raidPrepUpdate and message.type~="PAGE" and message.type~="TDATA" then
         return self:_reject(sender, message.type == "CMD" and message.command_id or nil, "wrong_channel")
     end
@@ -827,12 +952,14 @@ function Network:Receive(prefix, wire, channel, sender)
         if endsAt and (not self.api.serverNow or endsAt>self.api.serverNow()+Network.VOTING_SECONDS+5) then
             return self:_reject(sender,nil,"malformed_payload")
         end
-        voting={endsAt=endsAt,total=tonumber(message.vote_total)}
+        voting={endsAt=endsAt,total=tonumber(message.vote_total),version=tonumber(message.vv) or tonumber(message.version)}
     end
     if message.type=="PAGE" or message.type=="PAGE_REQ" then
+        if not pagePhases[self.phase] or self.authorityLostAt then return false,"wrong_phase" end
         local runwayPhase=self.phase=="runway" or self.phase=="runway_complete"
         local total=self.voting and self.voting.total or runwayPhase and self.runway and
             (self.runway.index-(self.phase=="runway" and 1 or 0))
+        if self.phase=="final_results" then total=self.awardCount or self.awards and math.min(4,#self.awards.results) end
         if not total or self.sessionId~=message.session_id or self.version~=tonumber(message.version) then return false,"stale_session" end
         local page=tonumber(message.page)
         if message.type=="PAGE_REQ" then
@@ -844,12 +971,21 @@ function Network:Receive(prefix, wire, channel, sender)
         local result,seen={},{}
         local first=(page-1)*Network.VOTE_PAGE_SIZE+1
         for part in (message.rows..","):gmatch("(.-),") do
-            local guid,score=part:match("^([%w%-]+):(%d+)$")
-            score=tonumber(score)
-            if not validGuid(guid) or seen[guid] or not score or (score~=0 and (score<100 or score>500))
-                or (self.phase~="round_results" and score~=0) then return false,"malformed_payload" end
+            local guid,score,cumulative=part:match("^([%w%-]+):(%d+):(%d+)$")
+            score,cumulative=tonumber(score),tonumber(cumulative)
+            local final=self.phase=="final_results"
+            if (not validGuid(guid) and not (guid=="-" and final)) or (guid~="-" and seen[guid]) or not score or not cumulative
+                or (score~=0 and (score<100 or score>500)) or (cumulative~=0 and (cumulative<100 or cumulative>500))
+                or (self.phase~="round_results" and (score~=0 or cumulative~=0)) then return false,"malformed_payload" end
+            if final then
+                local slot=first+#result
+                local podium=math.min(3,self.awardCount or 0)
+                local visible=self.awardsConfirmed and ((slot<=podium and slot>podium-(self.awardRevealed or 0)) or
+                    (slot==4 and self.awardRevealed==podium))
+                if (guid~="-")~=(visible==true) then return false,"malformed_payload" end
+            end
             seen[guid]=true
-            result[#result+1]={guid=guid,index=first+#result,score=score~=0 and score or nil}
+            result[#result+1]={guid=guid,index=first+#result,score=score~=0 and score or nil,cumulative=cumulative~=0 and cumulative or nil}
         end
         if #result~=math.min(Network.VOTE_PAGE_SIZE,total-first+1) then return false,"malformed_payload" end
         self.votePages=self.votePages or {}
@@ -882,7 +1018,9 @@ function Network:Receive(prefix, wire, channel, sender)
             return self:Send(stateFields(self,{ type="WELCOME", session_id=self.sessionId, version=self.version,
                 phase=self.phase, leader_guid=self.roster[self.leader].guid, role=member.role,
                 late=member.joinedAfterStart and 1 or nil,
-                voted=self.voting and self.voting.accepted[member.guid] and 1 or nil }), "WHISPER", sender)
+                voted=self.voting and self.voting.accepted[member.guid] and
+                    (self.phase=="voting" or self.phase=="round_results" or self.phase=="final_results" or
+                        (self.phase=="paused" and self.pausedPhase=="voting")) and 1 or nil }), "WHISPER", sender)
         elseif sender == self.leader then
             return self:Send({ type="HELLO", capability=Network.CAPABILITY }, "WHISPER", self.leader)
         end
@@ -900,10 +1038,14 @@ function Network:Receive(prefix, wire, channel, sender)
             self.sessionId, self.pending = nil, {}
         end
         if self.sessionId and version < self.version then return self:_reject(sender, nil, "stale_version") end
-        if self.sessionId~=message.session_id or version~=self.version then self.votePages,self.voted={},nil end
+        if self.sessionId~=message.session_id or version~=self.version then self.votePages={} end
+        self.round,self.rounds=tonumber(message.rn) or 1,tonumber(message.rc) or 1
+        self.awardCount,self.awardRevealed,self.awardsConfirmed=tonumber(message.ac),tonumber(message.rv),message.cf=="1"
+        self.voted=message.voted=="1"
+        self.pausedPhase,self.pauseCause=message.pp,message.why
+        self.hostVoteVersion=tonumber(message.vv)
         syncTeams(self,tonumber(message.sz),tonumber(message.tr),tonumber(message.tc),self.sessionId~=message.session_id)
         self.voting=voting
-        self.voted=self.voted or message.voted=="1"
         self.sessionId, self.version, self.phase = message.session_id, version, message.phase
         self.preparation, self.runway, self.originalLeader = preparation, runway, sender
         local me = self.roster[self.api.playerName()]
@@ -928,7 +1070,8 @@ function Network:Receive(prefix, wire, channel, sender)
             end
             if pending.status~="pending" then return self:_reject(sender,nil,"duplicate_result") end
             local accepted=message.type=="ACK" or message.reason=="ballot_already_submitted"
-            if accepted and pending.message.action=="VOTE" then self.voted=true end
+            if accepted and pending.message.action=="VOTE" and (self.phase=="voting" or self.pausedPhase=="voting")
+                and expectedVersion==(self.voting and self.voting.version or self.hostVoteVersion or self.version) then self.voted=true end
             if accepted and pending.message.action=="TEAM" and pending.message.op=="spectate" then
                 local me=self.roster[self.api.playerName()]
                 if me then me.role="spectator" end
@@ -966,6 +1109,14 @@ function Network:Receive(prefix, wire, channel, sender)
         local version = integer(message.version, 0)
         if not version or version <= self.version or not validPhases[message.phase] then return self:_reject(sender, nil, "stale_version") end
         syncTeams(self,tonumber(message.sz),tonumber(message.tr),tonumber(message.tc),false)
+        local nextRound=tonumber(message.rn) or 1
+        if nextRound~=(self.round or 0) or (message.phase=="voting" and self.phase~="voting" and self.pausedPhase~="voting") then
+            self.voted=false
+        end
+        self.pausedPhase,self.pauseCause=message.pp,message.why
+        self.hostVoteVersion=tonumber(message.vv)
+        self.round,self.rounds=nextRound,tonumber(message.rc) or 1
+        self.awardCount,self.awardRevealed,self.awardsConfirmed=tonumber(message.ac),tonumber(message.rv),message.cf=="1"
         self.voting,self.votePages=voting,{}
         self.version, self.phase, self.preparation, self.runway = version, message.phase, preparation, runway
         self:_emit("state_confirmed", self:GetProjection())
@@ -1055,7 +1206,16 @@ function Network:GetProjection()
         end
         r = {index=self.runway.index,total=self.runway.total,current=name(self.runway.current),currentGuid=self.runway.current,upcoming=name(self.runway.upcoming),endsAt=self.runway.endsAt}
     end
-    return { sessionId=self.sessionId, version=self.version, phase=self.phase, leader=self.leader,
+    local phase=self.authorityLostAt and self.phase~="registration" and "paused" or self.phase
+    return { sessionId=self.sessionId, version=self.version, phase=phase, leader=self.leader,
+        pauseCause=self.authorityLostAt and "authority" or self.pauseCause,
+        pausePhase=self.authorityLostAt and self.phase or self.pausedPhase,
+        authorityRemaining=self.authorityLostAt and math.max(0,Network.AUTHORITY_TIMEOUT-(self:_now()-self.authorityLostAt)),
+        canResume=self:IsAuthority() and self.phase=="paused" and not self:RunwayBlocked(),
+        round=self.round or 0,rounds=self.rounds or 1,
+        awardCount=self.awards and math.min(4,#self.awards.results) or self.awardCount,
+        awardRevealed=self.awards and self.awards.revealed or self.awardRevealed,
+        awardsConfirmed=self.awards and self.awards.confirmed or self.awardsConfirmed,
         isLeader=self:IsAuthority() == true, presence=counts, contestants=contestants, spectators=spectators,
         pendingResponses=counts.addon_pending + missingResponses,
         discoveryComplete=discoveryComplete, members=members, localRole=localMember and localMember.role, lobbyState=lobby,

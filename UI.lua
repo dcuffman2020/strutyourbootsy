@@ -126,6 +126,10 @@ local messages = {
     ballot_already_submitted="Your ballot has already been submitted.",
     voting_closed="Voting is closed or your ballot is already locked.",
     voting_running="Wait for voting to close before viewing results.",
+    invalid_roll="Enter a whole /roll 100 result from 1 to 100.",
+    rolls_required="Record a verified roll for each tied entry before confirming.",
+    reroll_required="Equal rolls were cleared. Have those entries /roll 100 again.",
+    not_finished="Finish every round before opening final awards.",
     practice_tie="A podium tie remains. Tie resolution is not included in this build.",
     preparation_running="Wait for the preparation timer to finish.",
     practice_solo_only="Leave your party or raid to use solo practice.",
@@ -324,6 +328,8 @@ local function buildThemeAndPreviewControls()
     end)
     extra.viewButton:SetHeight(20)
     extra.themeButton=button(overview,"Theme...",113,291,-66,openTheme)
+    extra.roundsButton=button(overview,"Rounds: 1",107,296,-8,function() extra.timerSetup="rounds";UI.Refresh() end)
+    extra.roundsButton:SetHeight(26)
     extra.prepButton=button(overview,"Outfit prep",143,13,-66,function()
         extra.timerSetup="prep"
         UI.Refresh()
@@ -342,6 +348,12 @@ local function buildThemeAndPreviewControls()
     extra.themeInput:SetScript("OnEscapePressed",closeTheme)
     extra.themeInput:SetScript("OnEnterPressed",function() useTheme(false) end)
     extra.themeInput:SetScript("OnTextChanged",function() if extra.themeEditor then extra.themeFeedback=nil;UI.Refresh() end end)
+    extra.rollInput=CreateFrame("EditBox","SYBRollInput",info,"InputBoxTemplate")
+    extra.rollInput:SetSize(115,30);extra.rollInput:SetPoint("TOPLEFT",19,-20)
+    extra.rollInput:SetAutoFocus(false);extra.rollInput:SetNumeric(true);extra.rollInput:SetMaxLetters(3)
+    extra.rollInput:SetScript("OnEscapePressed",function() extra.rollEntry=nil;extra.rollInput:ClearFocus();UI.Refresh() end)
+    extra.rollInput:SetScript("OnEnterPressed",function() extra.saveRoll() end)
+    extra.rollInput:Hide()
 end
 
 local function presenting(p)
@@ -533,7 +545,7 @@ function extra.showMiniStatus(p)
     local current=p.runway and p.phase=="runway" and p.runway.current
     local text=current and ("Presenting: "..current)
         or ({registration="Registration",preparation="Preparing outfits",paused="Runway paused",
-            runway_complete="Runway complete",voting="Voting",round_results="Results"})[p.phase] or "Minimized"
+            runway_complete="Runway complete",voting="Voting",round_results="Round results",final_results="Final awards",paused="Contest paused"})[p.phase] or "Minimized"
     extra.miniStatus:SetText(text)
 end
 
@@ -542,9 +554,11 @@ function extra.addReleaseFooter()
     local get=C_AddOns and C_AddOns.GetAddOnMetadata
     local version=get and get(addonName,"Version")
     local published=get and get(addonName,"X-Published-Date")
+    local built=get and get(addonName,"X-Build-Date")
     local author=get and get(addonName,"Author")
     if version and version~="" then parts[#parts+1]="v"..version end
-    if published and published~="" then parts[#parts+1]="Published "..published end
+    if published and published~="" then parts[#parts+1]="Published "..published
+    elseif built and built~="" then parts[#parts+1]="Built "..built end
     parts[#parts+1]="Made by "..(author and author~="" and author or "CraftyMonkeyButter")
     local footer=label(window,table.concat(parts,"  ·  "),10,0,0,muted,390)
     footer:ClearAllPoints()
@@ -887,6 +901,7 @@ local function build()
         if preferencesMode then closePreferences(true); return end
         if extra.themeEditor then useTheme(false);return end
         if extra.previewName or extra.viewPicker then return end
+        if extra.rollEntry then extra.saveRoll();return end
         if p.wizard then context.practiceAction("CONTINUE"); return end
         if p.practice then
             if p.phase=="runway_complete" then context.practiceAction("VOTING");return end
@@ -905,7 +920,13 @@ local function build()
             elseif p.phase == "preparation" then context.beginRunway()
             elseif p.phase == "runway" then context.advanceRunway()
             elseif p.phase == "runway_complete" then context.beginVoting()
-            elseif p.phase == "round_results" then context.endContest()
+            elseif p.phase == "paused" then context.resumeLive()
+            elseif p.phase == "round_results" then
+                if p.round<p.rounds then context.nextRound() else context.openAwards() end
+            elseif p.phase == "final_results" then
+                if not p.awardsConfirmed then context.confirmAwards()
+                elseif (p.awardRevealed or 0)<math.min(3,p.awardCount or 0) then context.revealAward()
+                else context.endContest() end
             else context.openRegistration() end
         else
             context.submitRole(p.submittedRole or selectedRole)
@@ -916,6 +937,7 @@ local function build()
         if extra.teamSecondary then extra.teamSecondary();return end
         if preferencesMode then closePreferences(false);return end
         if extra.themeEditor then closeTheme();return end
+        if extra.rollEntry then extra.rollEntry=nil;extra.rollInput:ClearFocus();UI.Refresh();return end
         if extra.timerSetup then extra.timerSetup=nil;UI.Refresh();return end
         if extra.viewPicker or extra.previewName then extra.viewPicker,extra.previewName=nil,nil;UI.Refresh();return end
         if p.wizard then context.practiceAction("BACK");return end
@@ -1011,7 +1033,9 @@ local function build()
     end)
     extra.reviewOutfits:ClearAllPoints()
     extra.reviewOutfits:SetPoint("TOPLEFT",window,"BOTTOMLEFT",135,48+skins.footerPadding)
-    extra.pauseRunway=button(overview,"Pause",98,300,-66,function() context.practiceAction("PAUSE") end)
+    extra.pauseRunway=button(overview,"Pause",98,300,-66,function()
+        if context.getProjection().practice then context.practiceAction("PAUSE") else context.pauseLive() end
+    end)
     extra.voteBack=button(overview,"Previous",88,13,-63,function() extra.votePage=extra.votePage-1;UI.Refresh() end)
     extra.voteNext=button(overview,"Next",88,109,-63,function() extra.votePage=extra.votePage+1;UI.Refresh() end)
     extra.votePageLabel=label(overview,"",12,212,-70,muted,128)
@@ -1358,6 +1382,22 @@ function UI.UpdateRunwayClock()
 end
 
 function extra.showContestTimer(p)
+    if extra.timerSetup=="rounds" then
+        title:SetText("Number of rounds")
+        summary:SetText("Choose how many times contestants present and the raid votes.")
+        details:SetText("");roleHint:SetText("")
+        local options={}
+        for i=1,5 do
+            local n=i
+            options[i]={n==1 and "1 round" or (n.." rounds"),function()
+                if context.setLiveRounds(n) then extra.timerSetup=nil end
+                UI.Refresh()
+            end,p.rounds==n}
+        end
+        optionRows(options)
+        actionLabel(secondary,"Back");primary:Hide()
+        return "An entry needs a qualifying score in every round to place."
+    end
     local prep=extra.timerSetup=="prep"
     title:SetText(prep and "Outfit prep timer" or "Runway timer")
     summary:SetText(prep and "Time for contestants to get dressed. The countdown starts when the theme is revealed."
@@ -1512,7 +1552,7 @@ function extra.showLiveVoting(p)
     voteDeadline=remaining>0 and p.voteEndsAt or nil
     local canVote=not result and p.voterEligible
     local pages=math.ceil(p.voteTotal/context.votePageSize)
-    local key=p.sessionId..":"..p.phase
+    local key=p.sessionId..":"..p.round..":"..p.phase
     if extra.voteKey~=key then extra.voteKey,extra.votePage=key,1 end
     local page=math.max(1,math.min(pages,extra.votePage))
     extra.votePage=page
@@ -1522,10 +1562,10 @@ function extra.showLiveVoting(p)
     primary:Hide()
     title:SetText(result and "Round results" or remaining==0 and "Voting has closed"
         or p.isLeader and "Voting monitor" or p.voteSubmitted and "Ballot accepted" or p.teams and "Rate teams" or "Rate contestants")
-    summary:SetText(result and "Aggregate scores · Two ratings needed to qualify."
+    summary:SetText(("Round %d of %d · "):format(p.round,p.rounds)..(result and "Two ratings needed per round."
         or p.isLeader and "The raid leader officiates and does not vote."
         or not canVote and "Only registered contestants and spectators can vote."
-        or p.voteSubmitted and "Your ballot is locked." or p.teams and "Rate other teams, then submit once." or "Rate any number of contestants, then submit once.")
+        or p.voteSubmitted and "Your ballot is locked." or p.teams and "Rate other teams, then submit once." or "Rate any number of contestants, then submit once."))
     if not result then endOfTimer:SetText(clockText(remaining)) end
     if not result and not canVote then
         return remaining>0 and "Voting closes at the deadline." or "Waiting for round results…"
@@ -1540,15 +1580,21 @@ function extra.showLiveVoting(p)
         context.requestVotePage(page)
     end
     if result then
-        if p.isLeader then actionLabel(primary,"End contest") end
+        if p.isLeader then
+            actionLabel(primary,p.round<p.rounds and ("Begin round "..(p.round+1)) or "Final awards",
+                p.round==p.rounds or not p.runwayBlocked)
+        end
         if not rows then return "Loading the round results…" end
         local options={}
         for _,entry in ipairs(rows) do
             local name=entry.name or "Contestant unavailable"
-            options[#options+1]={name.." · "..(entry.score and ("%.2f / 5"):format(entry.score/100) or "Not qualified")}
+            local round=entry.score and ("%.2f"):format(entry.score/100) or "No score"
+            local cumulative=entry.cumulative and ("%.2f"):format(entry.cumulative/100) or "Not qualified"
+            options[#options+1]={name.." · Round: "..round..(p.rounds>1 and " · Overall: "..cumulative or " / 5")}
         end
         optionRows(options)
-        return "Individual ballots aren’t displayed."
+        return p.round<p.rounds and p.runwayBlocked and "A contestant must return before the next round."
+            or "Only aggregate scores are shown."
     end
     info:Hide()
     votePanel:Show()
@@ -1584,6 +1630,84 @@ function extra.showLiveVoting(p)
     if p.ballotPending then return p.ballotRetry and "No confirmation yet. Retry the same ballot." or "Waiting for ballot confirmation…" end
     if not rows then return "Loading contestants…" end
     return "Select 1–5 stars. Click the same star again to clear."
+end
+
+function extra.askForRoll(entry)
+    extra.rollEntry=entry
+    extra.rollInput:SetText(entry.value and tostring(entry.value) or "")
+    UI.Refresh()
+    extra.rollInput:SetFocus()
+end
+
+function extra.saveRoll()
+    if not extra.rollEntry then return end
+    local value=tonumber(extra.rollInput:GetText())
+    if context.recordRoll(extra.rollEntry.entry,value) then
+        extra.rollEntry=nil
+        extra.rollInput:ClearFocus()
+        UI.Refresh()
+    end
+end
+
+function extra.showFinalAwards(p)
+    local count,revealed=p.awardCount or 0,p.awardRevealed or 0
+    local podium=math.min(3,count)
+    list:Hide();details:SetText("");roleHint:SetText("");primary:Hide()
+    title:SetText("Final awards")
+    if not p.awardsConfirmed then
+        summary:SetText(("Round %d of %d complete · Awards awaiting confirmation"):format(p.round,p.rounds))
+        if not p.isLeader then return "Waiting for the raid leader to verify the results." end
+        local ties=p.tieRolls or {}
+        if extra.rollEntry then
+            title:SetText("Record verified roll")
+            summary:SetText(extra.rollEntry.name.." · Enter the observed /roll 100 result.")
+            extra.rollInput:Show()
+            actionLabel(primary,"Record roll")
+            actionLabel(secondary,"Back")
+            return "Only the raid leader sees these roll values."
+        end
+        local pages=math.max(1,math.ceil(#ties/context.votePageSize))
+        local key=p.sessionId..":ties"
+        if extra.voteKey~=key then extra.voteKey,extra.votePage=key,1 end
+        local page=math.max(1,math.min(pages,extra.votePage))
+        extra.votePage=page
+        extra.voteBack:SetShown(page>1);extra.voteNext:SetShown(page<pages)
+        extra.votePageLabel:SetShown(pages>1)
+        extra.votePageLabel:SetText(("Page %d of %d"):format(page,pages))
+        local options={}
+        for i=(page-1)*context.votePageSize+1,math.min(page*context.votePageSize,#ties) do
+            local entry=ties[i]
+            options[#options+1]={entry.name.." · "..(entry.value and ("Roll: "..entry.value) or "Record roll"),
+                function() extra.askForRoll(entry) end}
+        end
+        local ready=true
+        for _,entry in ipairs(ties) do if not entry.value then ready=false;break end end
+        optionRows(options)
+        actionLabel(primary,"Confirm awards",ready)
+        return p.teams and "One member of each tied team rolls. Verify and record one result per team."
+            or "Have tied contestants /roll 100. Verify and record each result."
+    end
+    summary:SetText("Final placements · Qualified in every round")
+    if p.isLeader then
+        local slot=podium-revealed
+        actionLabel(primary,slot>0 and ({"Reveal first","Reveal second","Reveal third"})[slot] or "End contest")
+    end
+    if count==0 then return "No entry received a qualifying score in every round." end
+    local rows=context.getVotePage(1)
+    if not rows then context.requestVotePage(1) end
+    local options={}
+    local labels={"First place","Second place","Third place","Honorable Mention"}
+    for _,i in ipairs({3,2,1,4}) do
+        if i<=count then
+            local row=rows and rows[i]
+            local visible=row and not row.masked
+            options[#options+1]={labels[i].." · "..(visible and (row.name or "Syncing name…") or "Not revealed"),
+                nil,nil,visible and i or nil}
+        end
+    end
+    optionRows(options)
+    return revealed<podium and "The podium is revealed from third place to first."
+        or "Final placements are confirmed."
 end
 
 function extra.showResults(p)
@@ -1635,7 +1759,12 @@ function UI.Refresh()
     if extra.isMinimized then extra.showMiniStatus(p);return end
     if not window:IsShown() then return end
     extra.gallery:Hide();extra.inlineOutfit:Hide();extra.reviewOutfits:Hide();extra.pauseRunway:Hide()
-    extra.formatButton:Hide();extra.teamDirectory:Hide()
+    extra.formatButton:Hide();extra.teamDirectory:Hide();extra.roundsButton:Hide()
+    extra.rollInput:Hide()
+    if p.phase~="final_results" or p.awardsConfirmed or not p.isLeader then
+        if extra.rollEntry then extra.rollInput:ClearFocus() end
+        extra.rollEntry=nil
+    end
     extra.teamSizeLabel:Hide()
     for _,control in pairs(extra.teamSizeButtons) do control:Hide() end
     extra.teamPrimary,extra.teamSecondary,extra.teamUtility,extra.teamInputActive=nil,nil,nil,nil
@@ -1694,7 +1823,7 @@ function UI.Refresh()
     heroName:SetText("")
     heroNext:SetText("")
     applyPreferences()
-    local phaseIndex=({preparation=2,runway=3,paused=3,runway_complete=3,voting=4,round_results=5})[p.phase]
+    local phaseIndex=({preparation=2,runway=3,paused=3,runway_complete=3,voting=4,round_results=5,final_results=5})[p.phase]
     paintPhases(preferencesMode and 0 or phaseIndex or 1)
     decorate(overview,p.phase=="runway" and palette.selected or palette.panel,
         p.phase=="runway" and palette.trim or palette.outline)
@@ -1747,6 +1876,21 @@ function UI.Refresh()
         prompt=extra.teamContestScreen(p)
     elseif p.wizard then
         prompt=extra.showSettings(p)
+    elseif not p.practice and p.phase=="final_results" then
+        prompt=extra.showFinalAwards(p)
+    elseif not p.practice and p.phase=="paused" then
+        list:Hide();title:SetText("Contest paused")
+        summary:SetText(("Round %d of %d"):format(p.round,p.rounds))
+        details:SetText("");roleHint:SetText("")
+        primary:Hide()
+        if p.isLeader then actionLabel(primary,"Resume contest",p.canResume) end
+        if p.pauseCause=="authority" then
+            prompt=p.authorityRemaining and "The raid leader is disconnected. The contest ends after five minutes without recovery."
+                or "Waiting for the raid leader to confirm recovery."
+        elseif p.pauseCause=="contestant" then
+            prompt=p.runwayBlocked and "A contestant is unavailable. Wait for them to return."
+                or "The raid leader resumes the contest when the roster is ready."
+        else prompt="Timers are stopped. The raid leader resumes the contest." end
     elseif not p.practice and p.voteTotal and (p.phase=="voting" or p.phase=="round_results") then
         prompt=extra.showLiveVoting(p)
     elseif p.practice and p.phase=="voting" then
@@ -1762,7 +1906,8 @@ function UI.Refresh()
         prompt="Only the practice contest is paused."
     elseif lobby then
         title:SetText("Registration lobby")
-        if p.practice and not p.teams then actionLabel(utility,"Setup Contest") end
+        if p.practice and not p.teams then actionLabel(utility,"Setup Contest")
+        elseif not p.practice then actionLabel(extra.roundsButton,("Rounds: %d"):format(p.rounds or 1)) end
         actionLabel(extra.themeButton,"Theme...")
         if p.runwaySeconds then actionLabel(extra.timerButton,"Runway timer") end
         if p.preparationSeconds then actionLabel(extra.prepButton,"Outfit prep: "..clockText(p.preparationSeconds)) end
@@ -1821,12 +1966,13 @@ function UI.Refresh()
         primary:SetText("Begin runway")
         primary:SetShown(prepHost)
         primary:SetEnabled(false)
+        if not p.practice and p.isLeader then actionLabel(extra.pauseRunway,"Pause") end
         prepDeadline = p.preparation and p.preparation.endsAt
         prompt = prepDeadline and "" or "Syncing the countdown with the raid leader…"
     elseif p.phase == "runway" and p.runway then
         local r = p.runway
         title:SetText(("Round %d of %d: Runway"):format(p.round or 1,p.rounds or 1))
-        if p.practice and not p.preview then actionLabel(extra.pauseRunway,"Pause") end
+        if p.isLeader and not p.preview then actionLabel(extra.pauseRunway,"Pause") end
         summary:SetText((p.teams and "Presenting team  %d of %d" or "Presenting  %d of %d"):format(r.index,r.total))
         heroName:SetText(r.current)
         heroNext:SetText(r.upcoming and "Up next: " .. r.upcoming or "Final presentation")
@@ -1855,7 +2001,7 @@ function UI.Refresh()
                 r.upcoming==extra.previewName and "You’re up next. Get ready." or "Waiting for the raid leader to advance.")
                 or "The raid leader advances the runway.")
         end
-        primary:SetText(r.index==r.total and "Finish runway" or "Next contestant")
+        primary:SetText(r.index==r.total and "Finish runway" or p.teams and "Next team" or "Next contestant")
         primary:SetShown(p.isLeader == true)
         primary:SetEnabled(p.isLeader == true and not p.runwayBlocked)
         prompt = p.runwayBlocked and "A contestant is unavailable. Wait for them to return." or ""

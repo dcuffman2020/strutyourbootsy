@@ -14,10 +14,14 @@ local function countContestants(state)
     return n
 end
 
+function Core.ValidRounds(rounds)
+    return type(rounds)=="number" and rounds%1==0 and rounds>=1 and rounds<=5
+end
+
 function Core.New(admin, rounds)
     assert(type(admin) == "string" and admin ~= "", "admin required")
     rounds = rounds or 1
-    assert(type(rounds) == "number" and rounds % 1 == 0 and rounds >= 1 and rounds <= 5, "rounds must be 1-5")
+    assert(Core.ValidRounds(rounds), "rounds must be 1-5")
     return {
         admin = admin, phase = "registration", rounds = rounds, round = 0,
         participants = {}, order = {}, scores = {}, ballots = {},
@@ -175,6 +179,84 @@ function Core.FinalResults(state)
     end)
     -- Tied podium positions require the separate approved /roll 100 workflow.
     return results
+end
+
+-- Uses the unrounded per-round scores, weighted equally across rounds.
+-- Missing any round disqualifies an entry from the cumulative standings.
+function Core.Cumulative(state)
+    local scores={}
+    for _,name in ipairs(state.order) do
+        local sum,complete=0,true
+        for round=1,state.round do
+            local score=state.scores[round] and state.scores[round][name]
+            if not score then complete=false;break end
+            sum=sum+score
+        end
+        if complete and state.round>0 then scores[name]=sum/state.round end
+    end
+    return scores
+end
+
+-- Tie blocks that touch places 1-3 need verified /roll 100 results.
+-- The leader explicitly records observed rolls; equal rolls require reroll
+-- only among the affected entries. Roll data never appears in raid packets.
+function Core.OpenAwards(state)
+    local results,why=Core.FinalResults(state)
+    if not results then return false,why end
+    state.awards={results=results,rolls={},ties={},tieRanges={},revealed=0}
+    local i=1
+    while i<=#results and i<=3 do
+        local j=i+1
+        while j<=#results and math.abs(results[j].average-results[i].average)<1e-9 do j=j+1 end
+        if j>i+1 then
+            state.awards.tieRanges[#state.awards.tieRanges+1]={first=i,last=j-1}
+            for k=i,j-1 do state.awards.ties[results[k].name]=i end
+        end
+        i=j
+    end
+    state.phase="final_results"
+    return true
+end
+
+function Core.RecordRoll(state,name,n)
+    local a=state.awards
+    if state.phase~="final_results" or not a or a.confirmed then return false,"wrong_phase" end
+    if not a.ties[name] or type(n)~="number" or n%1~=0 or n<1 or n>100 then return false,"invalid_roll" end
+    a.rolls[name]=n
+    return true
+end
+
+function Core.ConfirmAwards(state)
+    local a=state.awards
+    if state.phase~="final_results" or not a or a.confirmed then return false,"wrong_phase" end
+    local used,redo={},{ }
+    for name,group in pairs(a.ties) do
+        local value=a.rolls[name]
+        if not value then return false,"rolls_required" end
+        used[group]=used[group] or {}
+        local prior=used[group][value]
+        if prior then redo[name],redo[prior]=true,true end
+        used[group][value]=name
+    end
+    if next(redo) then
+        for name in pairs(redo) do a.rolls[name]=nil end
+        return false,"reroll_required"
+    end
+    for _,range in ipairs(a.tieRanges) do
+        local group={}
+        for i=range.first,range.last do group[#group+1]=a.results[i] end
+        table.sort(group,function(l,r) return a.rolls[l.name]>a.rolls[r.name] end)
+        for i,r in ipairs(group) do a.results[range.first+i-1]=r end
+    end
+    a.confirmed=true
+    return true
+end
+
+function Core.RevealAward(state)
+    local a=state.awards
+    if state.phase~="final_results" or not a or not a.confirmed or a.revealed>=math.min(3,#a.results) then return false,"wrong_phase" end
+    a.revealed=a.revealed+1
+    return true
 end
 
 function Core.Pause(state)

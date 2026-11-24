@@ -112,6 +112,7 @@ local function makeClient(index)
     end}
     env.DEFAULT_CHAT_FRAME = {AddMessage=function(_, text) client.chat[#client.chat + 1] = text end}
     env.math = setmetatable({random=function(lo,hi)
+        if lo and not hi then return 1 end
         if lo then
             client.emoteDraws=(client.emoteDraws or 0)+1
             return client.reverseEmoteDraw and hi or lo
@@ -278,9 +279,10 @@ solo.slash("")
 local window = solo.env.SYBAdminWindow
 assert(window:IsShown() and solo.env.UISpecialFrames[1] == "SYBAdminWindow")
 assert(window.width==465 and window.height==601)
-assert(tocMetadata.Version=="0.7.0-beta.1" and tocMetadata["X-Published-Date"]:match("^%a%a%a %d%d?, %d%d%d%d$"))
+assert(tocMetadata.Version=="1.0.0" and tocMetadata["X-Build-Date"]:match("^%a%a%a %d%d?, %d%d%d%d$"))
 assert(tocMetadata.Author=="CraftyMonkeyButter")
-local footerText=("v%s  ·  Published %s  ·  Made by CraftyMonkeyButter"):format(tocMetadata.Version,tocMetadata["X-Published-Date"])
+local date= tocMetadata["X-Published-Date"] and "Published "..tocMetadata["X-Published-Date"] or "Built "..tocMetadata["X-Build-Date"]
+local footerText=("v%s  ·  %s  ·  Made by CraftyMonkeyButter"):format(tocMetadata.Version,date)
 local footer
 for _,item in ipairs(window.labels) do if item:GetText()==footerText then footer=item end end
 assert(footer and footer.anchor[1]=="BOTTOMRIGHT" and footer.anchor[2]==window and footer.wordWrap==false)
@@ -565,7 +567,7 @@ checkHiddenTheme = false
 local finishingAt = group[1].env.GetServerTime() + 300
 group[6].missReveal = true
 assert(leader.click("Start contest"))
-assert(leader.warnings[2]=="Strut Your Bootsy: Preparation is open. Theme: Guild-Forged, Round 1.")
+assert(leader.warnings[2]=="Strut Your Bootsy: Round 1 of 1 preparation is open. Theme: Guild-Forged, Round 1.")
 deliver()
 for i = 1, 5 do
     assertLabel(group[i], "Theme: Guild-Forged, Round 1")
@@ -594,6 +596,9 @@ assert(not leader.click("Begin runway"))
 assertLabel(leader, "A contestant is unavailable. Wait for them to return.")
 roster[4].online = true
 leader.event("GROUP_ROSTER_UPDATE")
+assertLabel(leader,"Contest paused")
+assert(leader.click("Resume contest")); deliver()
+advance(1)
 for i=2,6 do assert(not group[i].click("Begin runway")) end
 group[6].missReveal = false
 assert(leader.click("Begin runway")); deliver()
@@ -681,6 +686,9 @@ for j,name in ipairs(order) do
         roster[3].online=false; leader.event("GROUP_ROSTER_UPDATE")
         assert(not leader.click("Next contestant"))
         roster[3].online=true; leader.event("GROUP_ROSTER_UPDATE")
+        assertLabel(leader,"Contest paused")
+        advance(6)
+        assert(leader.click("Resume contest"));deliver()
         group[6].missReveal=true -- miss this turn update; recover via refresh below.
         assert(group[2].click("−") and group[2].env.SYBMinimizedBar:IsShown())
         assertLabel(group[2],"Presenting: Player3-Realm")
@@ -729,7 +737,7 @@ leader.slash("practice")
 assert(leader.chat[#leader.chat]:find("Leave your party or raid",1,true))
 
 -- Exercise the public solo launcher and five-step loop. No raid packets may leave.
-assert(leader.warnings[8]=="Strut Your Bootsy: The runway is complete.")
+assert(leader.warnings[8]=="Strut Your Bootsy: Round 1 runway is complete.")
 group[2].slash("announce winners Player3 Player4 Player5")
 assert(#group[2].warnings==0)
 leader.slash("announce winners Player3 Player3 Player5")
@@ -790,9 +798,19 @@ assertLabel(leader,"Voting monitor")
 advance(1)
 for _,member in ipairs(group) do
     assertLabel(member,"Round results")
-    assert(member.find("Player3-Realm · 4.50 / 5"))
-    assert(not member.find("Player4-Realm · 5.00 / 5"))
+    assert(member.find("Player3-Realm · Round: 4.50 / 5"))
+    assert(not member.find("Player4-Realm · Round: 5.00 / 5"))
 end
+assert(not leader.click("End contest"))
+advance(6)
+assert(leader.click("Final awards")); deliver()
+assertLabel(group[2],"Final awards")
+assert(group[2].find("First place · Not revealed"))
+assert(not group[2].click("Reveal first"))
+advance(6)
+assert(leader.click("Reveal first")); deliver()
+assert(group[2].find("First place · Player3-Realm"))
+advance(6)
 assert(leader.click("End contest")); deliver()
 assertLabel(group[2],"Welcome to the runway")
 roster, clients, packets = {}, {}, {}
@@ -1135,7 +1153,7 @@ do
     assert(host.click("Begin runway"));deliver()
     assertLabel(teamRaid[3],"Presenting team  1 of 3")
     for i=1,3 do
-        assert(host.click(i==3 and "Finish runway" or "Next contestant"));deliver();advance(6)
+        assert(host.click(i==3 and "Finish runway" or "Next team"));deliver();advance(6)
     end
     assert(host.click("Begin voting"));deliver()
     assertLabel(teamRaid[2],"Rate teams")
@@ -1145,7 +1163,14 @@ do
     assert(rateInLive(teamRaid[4],"Golden Hounds",3) and teamRaid[4].click("Submit ballot"));deliver()
     assert(not host.find("Submit ballot"))
     advance(54)
-    assert(teamRaid[2].find("Golden Hounds · 4.00 / 5"))
+    assert(teamRaid[2].find("Golden Hounds · Round: 4.00 / 5"))
+    advance(6)
+    assert(host.click("Final awards"));deliver()
+    assert(teamRaid[2].find("First place · Not revealed"))
+    advance(6)
+    assert(host.click("Reveal first"));deliver()
+    assert(teamRaid[2].find("First place · Golden Hounds"))
+    advance(6)
     assert(host.click("End contest"));deliver()
 end
 print("Team setup, nomination, and live team voting passed")
@@ -1158,10 +1183,10 @@ do
     assertLabel(c,"Team contest · 2 per team\nComplete: 3 / 3 minimum · Unassigned: 0\nPending addon responses: 0")
     assert(c.click("Start contest") and c.click("Skip countdown") and c.click("Begin runway"))
     assertLabel(c,"Presenting team  1 of 3")
-    assert(c.click("Next contestant") and c.click("Review outfits"))
+    assert(c.click("Next team") and c.click("Review outfits"))
     assertLabel(c,"Outfit 1 of 2 · Runway order")
     assert(c.click("Next outfit") and c.click("Back to runway"))
-    assert(c.click("Next contestant") and c.click("Finish runway") and c.click("Begin voting"))
+    assert(c.click("Next team") and c.click("Finish runway") and c.click("Begin voting"))
     assert(rateInLive(c,"Gilded Hounds",5) and c.click("Submit ballot"))
     assert(c.click("Skip vote timer") and c.click("View round results"))
     assert(c.find("1st place · Gilded Hounds · 5.0 / 5"))
