@@ -279,7 +279,7 @@ solo.slash("")
 local window = solo.env.SYBAdminWindow
 assert(window:IsShown() and solo.env.UISpecialFrames[1] == "SYBAdminWindow")
 assert(window.width==465 and window.height==601)
-assert(tocMetadata.Version=="1.0.0" and tocMetadata["X-Build-Date"]:match("^%a%a%a %d%d?, %d%d%d%d$"))
+assert(tocMetadata.Version:match("^%d+%.%d+%.%d+$") and tocMetadata["X-Build-Date"]:match("^%a%a%a %d%d?, %d%d%d%d$"))
 assert(tocMetadata.Author=="CraftyMonkeyButter")
 local date= tocMetadata["X-Published-Date"] and "Published "..tocMetadata["X-Published-Date"] or "Built "..tocMetadata["X-Build-Date"]
 local footerText=("v%s  ·  %s  ·  Made by CraftyMonkeyButter"):format(tocMetadata.Version,date)

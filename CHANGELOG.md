@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Bootsy hits the runway in new faction-neutral transmog. The transparent crest replaces the previous logo in the addon and minimap launcher.
+- No changes to contest rules, voting, or saved settings.
+
 ## 1.0.0
 
 - Run one to five transmog contest rounds in Solo or Team mode, with a fresh rating ballot for each round.

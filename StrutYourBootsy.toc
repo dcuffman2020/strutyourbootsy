@@ -1,8 +1,8 @@
 ## Interface: 120105
 ## Title: Strut Your Bootsy
 ## Notes: Raid-based transmog runway contests
-## Version: 1.0.0
-## X-Build-Date: Nov 23, 2026
+## Version: 1.0.1
+## X-Build-Date: Nov 26, 2026
 ## Author: CraftyMonkeyButter
 ## SavedVariablesPerCharacter: SYBCharacterDB
 Core.lua
